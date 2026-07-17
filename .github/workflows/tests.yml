@@ -39,7 +39,34 @@ jobs:
           set -e
           # same family as scripts/publish_mirror.sh's gate + basic credential shapes
           PATTERNS='kfaim|sk-ant-|ghp_[A-Za-z0-9]{30}|github_pat_|AKIA[0-9A-Z]{16}|sk_live_|whsec_[A-Za-z0-9]{20}|GOCSPX-|xox[baprs]-|BEGIN [A-Z]* ?PRIVATE KEY'
-          HITS=$(git grep -lIE "$PATTERNS" -- . ':!tests/' ':!src/mainframe_mcp/secrets.py' ':!.github/workflows/tests.yml' || true)
+          BASE_SHA='${{ github.event.pull_request.base.sha }}'
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+
+          CHANGED_FILE=$(mktemp)
+          BLOB_FILE=$(mktemp)
+          trap 'rm -f "$CHANGED_FILE" "$BLOB_FILE"' EXIT
+          git diff --name-only -z --diff-filter=ACMRT "$BASE_SHA" HEAD > "$CHANGED_FILE"
+
+          HITS=""
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              tests/*|src/mainframe_mcp/secrets.py|.github/workflows/tests.yml) continue ;;
+            esac
+            if ! git cat-file blob "HEAD:$file" > "$BLOB_FILE"; then
+              echo "::error::could not read changed Git blob: $file"
+              exit 1
+            fi
+            if grep -aqE "$PATTERNS" "$BLOB_FILE"; then
+              HITS+="$file"$'\n'
+            else
+              status=$?
+              if [ "$status" -ne 1 ]; then
+                echo "::error::could not scan changed Git blob: $file"
+                exit 1
+              fi
+            fi
+          done < "$CHANGED_FILE"
+
           if [ -n "$HITS" ]; then
             echo "::error::possible secret or private marker in: $HITS"
             exit 1
