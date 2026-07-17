@@ -135,6 +135,43 @@ def test_line_spans_survive_missing_file(mainframe):
     assert "line_start" not in res[0]
 
 
+def test_line_spans_omitted_when_source_changed_after_ingest(mainframe):
+    """Stored char offsets must never be applied to a different file revision."""
+    mf = mainframe
+    d = Path(mf.config["paths"]["repos_dir"]) / "proj" / "docs"
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / "changed.md"
+    original = "# Original\n\nStable indexed citation phrase.\n"
+    f.write_text(original, encoding="utf-8")
+    mf.ingest_file(str(f))
+
+    # Whitespace-only edits preserve Mainframe's normalized manifest hash but
+    # still move every following character/line offset.
+    f.write_text("\n" + original, encoding="utf-8")
+    res = mf.search("stable indexed citation phrase", top_k=1)
+
+    assert res and "char_start" in res[0]
+    assert "line_start" not in res[0]
+    assert "line_end" not in res[0]
+
+
+def test_line_end_respects_exclusive_char_end(mainframe):
+    """A chunk ending at a newline belongs to the preceding content line."""
+    mf = mainframe
+    d = Path(mf.config["paths"]["repos_dir"]) / "proj" / "docs"
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / "exclusive-end.md"
+    text = "# End\n\nExclusive endpoint citation phrase.\n"
+    f.write_text(text, encoding="utf-8")
+    mf.ingest_file(str(f))
+
+    res = mf.search("exclusive endpoint citation phrase", top_k=1)
+    assert res
+    r = res[0]
+    expected_end = text.count("\n", 0, max(r["char_start"], r["char_end"] - 1)) + 1
+    assert r["line_end"] == expected_end
+
+
 # ---------- item 6: structured JSON response ----------
 
 def test_search_response_is_valid_json(mainframe, monkeypatch):

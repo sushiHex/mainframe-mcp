@@ -370,6 +370,10 @@ class MainframeMCP:
                 "heading": r["heading"],
                 "text": full_text[:500],
                 "truncated": len(full_text) > 500,
+                # Internal-only evidence used to verify that stored character
+                # offsets still address the indexed source revision. Removed by
+                # _add_line_spans before results leave search().
+                "_citation_text": full_text,
                 # exact source span so an agent can Read the full section to cite
                 "char_start": int(r["char_start"]),
                 "char_end": int(r["char_end"]),
@@ -396,14 +400,14 @@ class MainframeMCP:
 
         return results
 
-    @staticmethod
-    def _add_line_spans(results: list[dict]) -> None:
+    def _add_line_spans(self, results: list[dict]) -> None:
         """Annotate each result with 1-based line_start/line_end from its char
         span, reading each unique file at most once. Best-effort: an unreadable
-        file (moved/deleted/binary) leaves the result's line fields absent —
-        never raises, so a stale index can't break search."""
+        or post-ingest modified file leaves the result's line fields absent —
+        never raises, so a stale index can't produce false citations."""
         cache: dict[str, str | None] = {}
         for r in results:
+            citation_text = r.pop("_citation_text", None)
             f = r["file"]
             if f not in cache:
                 try:
@@ -413,8 +417,17 @@ class MainframeMCP:
             text = cache[f]
             if text is None:
                 continue
+            if self.manifest.get_hash(f) != content_hash(text):
+                continue
+            source_span = text[r["char_start"]:r["char_end"]]
+            if citation_text is None or source_span.rstrip() != citation_text.rstrip():
+                continue
             r["line_start"] = text.count("\n", 0, r["char_start"]) + 1
-            r["line_end"] = text.count("\n", 0, r["char_end"]) + 1
+
+            # char_end is exclusive: a span ending immediately after a newline
+            # belongs to the preceding content line, not the next empty line.
+            end_pos = max(r["char_start"], r["char_end"] - 1)
+            r["line_end"] = text.count("\n", 0, end_pos) + 1
 
     def list_files(self) -> dict:
         """List all files in the Mainframe with stats."""
@@ -1149,10 +1162,10 @@ def main():
 
     # Pre-warm (OPT-IN via MAINFRAME_PREWARM): load models NOW in a daemon
     # thread so the ~2min embedder+4B load overlaps the MCP handshake instead of
-    # taxing the FIRST search. Default is LAZY — an always-on gateway sharing a
+    # taxing the FIRST tool call. Default is LAZY — an always-on gateway sharing a
     # GPU with other agents must not claim ~13GB of VRAM merely because a client
-    # connected; models load on the first search instead. Claude-Code users who
-    # want instant first-search set MAINFRAME_PREWARM=1.
+    # connected; models load on the first tool call instead. Claude-Code users who
+    # want an instant first-tool response set MAINFRAME_PREWARM=1.
     if _prewarm_enabled():
         threading.Thread(target=get_mainframe, name="prewarm", daemon=True).start()
 

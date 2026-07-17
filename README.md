@@ -43,7 +43,7 @@ Nothing about the server is Claude-specific — it speaks plain MCP over stdio. 
 | Env var | Effect |
 |---------|--------|
 | `MAINFRAME_CONFIG` | Path to the config file (portable override; default `~/.claude/mainframe/config.json`) |
-| `MAINFRAME_PREWARM=1` | Load models at startup instead of lazily on the first search. **Off by default** — an always-on gateway sharing a GPU should not claim ~13 GB of VRAM merely because a client connected. Set this for a dedicated, interactive setup that wants instant first-search. |
+| `MAINFRAME_PREWARM=1` | Load models at startup instead of lazily on the first tool call. **Off by default** — an always-on gateway sharing a GPU should not claim ~13 GB of VRAM merely because a client connected. Set this for a dedicated, interactive setup that wants instant first-tool response. |
 | `MAINFRAME_READ_ONLY=1` | Expose only `search` / `list_files` / `status` (no delete / consolidate / bulk-index / RAPTOR). Smaller tool schema, no accidental mutation — ideal when injecting Mainframe into ordinary conversations. Run maintenance from a separate, full-access invocation. |
 
 Example (a generic gateway config; adjust to your host's schema):
