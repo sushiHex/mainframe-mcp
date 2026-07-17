@@ -1,0 +1,42 @@
+[
+  {
+    "query": "LanceDB to_pandas columns kwarg raises projection workaround",
+    "expected_file": "CLAUDE.md",
+    "expected_text_contains": "to_pandas"
+  },
+  {
+    "query": "bitsandbytes INT8 kernel grid batch seq_length 65535 overflow",
+    "expected_file": "CLAUDE.md",
+    "expected_text_contains": "grid"
+  },
+  {
+    "query": "rerank_score higher better trust threshold noise",
+    "expected_file": "docs/MAINFRAME_QUERY.md",
+    "expected_text_contains": "rerank_score"
+  },
+  {
+    "query": "consolidate_sessions merge session captures curated memory note",
+    "expected_file": "CLAUDE.md",
+    "expected_text_contains": "consolidat"
+  },
+  {
+    "query": "candidate pool floor reranker starved limit decoupled",
+    "expected_file": "CLAUDE.md",
+    "expected_text_contains": "candidate_pool"
+  },
+  {
+    "query": "secret scrub denylist capture session gitignore lane",
+    "expected_file": "CLAUDE.md",
+    "expected_text_contains": "scrub"
+  },
+  {
+    "query": "Qwen3 reranker yes no logit native scoring instruction",
+    "expected_file": "CLAUDE.md",
+    "expected_text_contains": "qwen3-logit"
+  },
+  {
+    "query": "contextual retrieval Haiku ingest opt-in prompt caching",
+    "expected_file": "README.md",
+    "expected_text_contains": "contextual"
+  }
+]

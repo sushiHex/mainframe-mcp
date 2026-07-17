@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mainframe-mcp"
+version = "1.0.0"
+description = "GPU-accelerated semantic knowledge base MCP server for Claude Code and other MCP agents. Local embedding, reranking, contradiction detection, and consolidation on a single GPU."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "sushiHex"}]
+dependencies = [
+    "lancedb>=0.15",
+    "sentence-transformers>=3.0",
+    "transformers>=4.40",
+    "mcp>=1.0",
+    "tantivy>=0.22",
+    # Store's projected reads (dedup hash scans, stats) go through
+    # table.to_lance() — lancedb does NOT pull pylance in on its own, and
+    # without it dedup silently degrades to no-op (empty donor sets).
+    "pylance>=0.20",
+    # The shipped default config quantizes the embedder (INT8), reranker (INT8),
+    # and consolidator (4-bit) — all three load paths hard-require bitsandbytes.
+    "bitsandbytes>=0.43",
+    # transformers' device_map="auto" (every quantized loader here) requires
+    # accelerate — it is NOT pulled in transitively on a clean install.
+    "accelerate>=0.26",
+    # store.search imports pandas at runtime to merge vector+FTS candidates.
+    "pandas>=2.0",
+]
+
+[project.urls]
+Repository = "https://github.com/sushiHex/mainframe-mcp"
+Issues = "https://github.com/sushiHex/mainframe-mcp/issues"
+
+[project.scripts]
+mainframe-mcp = "mainframe_mcp.server:main"
+
+[project.optional-dependencies]
+consolidation = ["llama-cpp-python>=0.3"]
+# Opt-in API contextual retrieval at ingest (contextualizer.py).
+contextual = ["anthropic>=0.40"]
+# GPU-free test tier: fakes + real LanceDB (torch arrives via sentence-transformers).
+test = ["pytest>=8.0", "numpy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
