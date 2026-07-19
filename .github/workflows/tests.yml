@@ -1,0 +1,74 @@
+# GPU-free test suite (fake CPU embedder + real LanceDB) — the per-push gate.
+# The GPU eval (eval/evaluate.py --min-score) runs manually/nightly on the 3090,
+# not here.
+name: tests
+
+on:
+  push:
+    branches: [master, main]  # master = private dev; main = the public mirror
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install CPU torch first (avoid the CUDA wheel bundle)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Install package + test deps
+        run: pip install -e .[test]
+      - name: Run suite
+        run: python -m pytest tests/ -q
+
+  # Contributor PRs must not introduce secrets or the maintainer's private
+  # markers. Public mirror only: the private dev repo legitimately contains
+  # tracked research/ and experiment logs that this grep would flag.
+  leak-check:
+    if: github.repository == 'sushiHex/mainframe-mcp' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Grep for secrets and private markers
+        run: |
+          set -e
+          # same family as scripts/publish_mirror.sh's gate + basic credential shapes
+          PATTERNS='kfaim|sk-ant-|ghp_[A-Za-z0-9]{30}|github_pat_|AKIA[0-9A-Z]{16}|sk_live_|whsec_[A-Za-z0-9]{20}|GOCSPX-|xox[baprs]-|BEGIN [A-Z]* ?PRIVATE KEY'
+          BASE_SHA='${{ github.event.pull_request.base.sha }}'
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+
+          CHANGED_FILE=$(mktemp)
+          BLOB_FILE=$(mktemp)
+          trap 'rm -f "$CHANGED_FILE" "$BLOB_FILE"' EXIT
+          git diff --name-only -z --diff-filter=ACMRT "$BASE_SHA" HEAD > "$CHANGED_FILE"
+
+          HITS=""
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              tests/*|src/mainframe_mcp/secrets.py|.github/workflows/tests.yml) continue ;;
+            esac
+            if ! git cat-file blob "HEAD:$file" > "$BLOB_FILE"; then
+              echo "::error::could not read changed Git blob: $file"
+              exit 1
+            fi
+            if grep -aqE "$PATTERNS" "$BLOB_FILE"; then
+              HITS+="$file"$'\n'
+            else
+              status=$?
+              if [ "$status" -ne 1 ]; then
+                echo "::error::could not scan changed Git blob: $file"
+                exit 1
+              fi
+            fi
+          done < "$CHANGED_FILE"
+
+          if [ -n "$HITS" ]; then
+            echo "::error::possible secret or private marker in: $HITS"
+            exit 1
+          fi
+          echo "leak-check clean"

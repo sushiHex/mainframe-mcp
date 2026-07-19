@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 680" role="img" aria-label="mainframe-mcp architecture: ingest, local dual index, read-only query hot path, and an ambient-memory loop.">
+  <defs>
+    <marker id="ah" markerWidth="9" markerHeight="9" refX="7.5" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#66768a"/></marker>
+    <marker id="ahb" markerWidth="9" markerHeight="9" refX="7.5" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#4da3ff"/></marker>
+    <marker id="ahg" markerWidth="9" markerHeight="9" refX="7.5" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#ffce54"/></marker>
+    <style>
+      .bg{fill:#0f1419}
+      .z{fill:none;stroke:#2c3a4f}
+      .z-tab{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;letter-spacing:1.3px;fill:#66768a}
+      .nrect{fill:#232e40;stroke:#2c3a4f;stroke-width:1}
+      .nrect.agent{stroke:#4da3ff;stroke-width:1.5}
+      .nrect.store{fill:#1d2735;stroke:#4fd6c4;stroke-opacity:.5}
+      .n-t{font-size:13.5px;font-weight:600;fill:#e6edf3;font-family:'Inter Tight',system-ui,Segoe UI,Roboto,sans-serif}
+      .n-s{font-size:10.5px;fill:#93a3b8;font-family:'JetBrains Mono',ui-monospace,Menlo,monospace}
+      .flow{stroke:#66768a;stroke-width:1.6;fill:none}
+      .flow.acc{stroke:#4da3ff;stroke-opacity:.9}
+      .flow.dash{stroke-dasharray:5 4;stroke:#ffce54;stroke-opacity:.7}
+      .elabel{font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:10.5px;fill:#93a3b8}
+      .elabel.g{fill:#ffce54}
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1000" height="680" rx="16"/>
+
+  <rect class="z" x="28" y="58"  width="944" height="120" rx="14"/>
+  <text class="z-tab" x="44" y="78">INGEST</text>
+  <rect class="z" x="352" y="206" width="296" height="108" rx="14"/>
+  <text class="z-tab" x="368" y="226">LOCAL INDEX · DERIVED, DISPOSABLE</text>
+  <rect class="z" x="28" y="342" width="944" height="128" rx="14"/>
+  <text class="z-tab" x="44" y="362">QUERY · READ-ONLY HOT PATH</text>
+  <rect class="z" x="28" y="498" width="944" height="150" rx="14"/>
+  <text class="z-tab" x="44" y="518">AMBIENT MEMORY · FILES ARE THE SOURCE OF TRUTH</text>
+
+  <path class="flow dash" d="M 842 540 C 958 540 958 40 500 40 L 476 40 L 476 92" marker-end="url(#ahg)"/>
+  <text class="elabel g" x="700" y="32">re-indexed</text>
+
+  <rect class="nrect" x="56"  y="96" width="188" height="56" rx="9"/>
+  <text class="n-t" x="150" y="120" text-anchor="middle">Sources</text>
+  <text class="n-s" x="150" y="138" text-anchor="middle">research · docs · CLAUDE.md</text>
+  <rect class="nrect" x="382" y="96" width="188" height="56" rx="9"/>
+  <text class="n-t" x="476" y="120" text-anchor="middle">Chunk</text>
+  <text class="n-s" x="476" y="138" text-anchor="middle">header-aware · 256 tok</text>
+  <rect class="nrect" x="712" y="96" width="222" height="56" rx="9"/>
+  <text class="n-t" x="823" y="120" text-anchor="middle">Embed</text>
+  <text class="n-s" x="823" y="138" text-anchor="middle">Qwen3-Embedding-8B · INT8</text>
+  <path class="flow" d="M 244 124 L 378 124" marker-end="url(#ah)"/>
+  <path class="flow" d="M 570 124 L 708 124" marker-end="url(#ah)"/>
+
+  <rect class="nrect store" x="378" y="238" width="124" height="52" rx="9"/>
+  <text class="n-t" x="440" y="260" text-anchor="middle">Tantivy</text>
+  <text class="n-s" x="440" y="277" text-anchor="middle">BM25 full-text</text>
+  <rect class="nrect store" x="520" y="238" width="124" height="52" rx="9"/>
+  <text class="n-t" x="582" y="260" text-anchor="middle">LanceDB</text>
+  <text class="n-s" x="582" y="277" text-anchor="middle">vector NN</text>
+  <path class="flow" d="M 476 152 C 476 200 448 206 444 234" marker-end="url(#ah)"/>
+  <path class="flow" d="M 823 152 C 823 206 600 206 588 234" marker-end="url(#ah)"/>
+
+  <rect class="nrect agent" x="56" y="374" width="168" height="72" rx="9"/>
+  <text class="n-t" x="140" y="406" text-anchor="middle">Claude Code</text>
+  <text class="n-t" x="140" y="424" text-anchor="middle">agent</text>
+  <rect class="nrect" x="392" y="382" width="150" height="56" rx="9"/>
+  <text class="n-t" x="467" y="406" text-anchor="middle">Hybrid merge</text>
+  <text class="n-s" x="467" y="424" text-anchor="middle">vector + BM25</text>
+  <rect class="nrect" x="612" y="382" width="256" height="56" rx="9"/>
+  <text class="n-t" x="740" y="406" text-anchor="middle">Rerank</text>
+  <text class="n-s" x="740" y="424" text-anchor="middle">Qwen3-Reranker-4B · native logits</text>
+  <path class="flow acc" d="M 224 400 L 388 406" marker-end="url(#ahb)"/>
+  <text class="elabel" x="250" y="393">search (MCP)</text>
+  <path class="flow" d="M 444 290 L 420 378" marker-end="url(#ah)"/>
+  <path class="flow" d="M 582 290 L 518 378" marker-end="url(#ah)"/>
+  <path class="flow" d="M 542 410 L 608 410" marker-end="url(#ah)"/>
+  <path class="flow acc" d="M 740 382 L 740 360 L 140 360 L 140 372" marker-end="url(#ahb)"/>
+  <text class="elabel" x="360" y="353">ranked hits · rerank_score</text>
+
+  <rect class="nrect" x="270" y="540" width="196" height="56" rx="9"/>
+  <text class="n-t" x="368" y="564" text-anchor="middle">Capture</text>
+  <text class="n-s" x="368" y="582" text-anchor="middle">immutable · secret-scrubbed</text>
+  <rect class="nrect" x="506" y="540" width="196" height="56" rx="9"/>
+  <text class="n-t" x="604" y="564" text-anchor="middle">Consolidate</text>
+  <text class="n-s" x="604" y="582" text-anchor="middle">Qwen2.5-3B + DeBERTa-NLI</text>
+  <rect class="nrect store" x="742" y="540" width="196" height="56" rx="9"/>
+  <text class="n-t" x="840" y="564" text-anchor="middle">Curated notes</text>
+  <text class="n-s" x="840" y="582" text-anchor="middle">git-tracked · source of truth</text>
+  <path class="flow" d="M 140 446 C 140 520 210 545 266 552" marker-end="url(#ah)"/>
+  <text class="elabel" x="150" y="500">capture_memory</text>
+  <path class="flow" d="M 466 568 L 502 568" marker-end="url(#ah)"/>
+  <path class="flow" d="M 702 568 L 738 568" marker-end="url(#ah)"/>
+</svg>

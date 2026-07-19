@@ -1,0 +1,54 @@
+{
+  "_name": "GPU Max — RTX 3090 24GB, all models loaded",
+  "_vram": "~10.2GB base, ~14.9GB peak ingest, ~13.8GB free",
+  "embedder": {
+    "model": "Qwen/Qwen3-Embedding-8B",
+    "quantize": true,
+    "batch_size": 8,
+    "max_seq_length": 2048,
+    "query_prefix": "Instruct: Find the most relevant code documentation or knowledge base entry\nQuery: "
+  },
+  "reranker": {
+    "model": "Qwen/Qwen3-Reranker-4B",
+    "enabled": true,
+    "top_k": 3,
+    "heading_inject": true
+  },
+  "contextual": {
+    "enabled": false,
+    "model": "claude-haiku-4-5"
+  },
+  "nli": {
+    "model": "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli",
+    "enabled": true,
+    "threshold": 0.7
+  },
+  "consolidator": {
+    "model": "Qwen/Qwen2.5-3B-Instruct",
+    "enabled": true,
+    "quantize": true,
+    "max_new_tokens": 4096
+  },
+  "chunker": {
+    "chunk_size": 256,
+    "overlap_ratio": 0.35,
+    "min_section_tokens": 10
+  },
+  "search": {
+    "fetch_multiplier": 2,
+    "rerank_top_k": 3,
+    "recency_weight": 0.0,
+    "recency_halflife_days": 90
+  },
+  "tiers": {
+    "library": 0.9,
+    "project": 0.93,
+    "docs": 0.95,
+    "research": 0.97,
+    "session": 1.05,
+    "archive": 1.1
+  },
+  "memory": {
+    "consolidate_threshold": 5
+  }
+}

@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+.lancedb/
+.eval-lancedb/
+.models/
+*.egg-info/
+dist/
+build/
+.manifest.json
+
+# Raw, transcript-derived session captures (ambient capture, Phase 1).
+# Gitignored as the primary secret-leak defense — only curated, human-reviewed
+# research/memory/ notes are git-tracked. See CLAUDE.md "Ambient capture".
+research/sessions/
+
+# Corpus-specific eval fixtures: the query set and per-run result JSONs
+# inevitably describe the owner's PRIVATE corpus (project names, file paths).
+# The tracked test_queries.example.json documents the format instead.
+eval/test_queries.json
+eval/results/*.json
+# Your experiment log (copied from eval/results.template.md) — corpus-specific,
+# never belongs in a PR. (Tracked in the maintainer's private repo only.)
+eval/results.md
