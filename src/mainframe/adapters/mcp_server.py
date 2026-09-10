@@ -5,6 +5,7 @@ blocking work to a thread so /healthz and /shutdown stay responsive."""
 
 import asyncio
 import contextlib
+from urllib.parse import urlsplit
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -66,18 +67,14 @@ def _server(name: str) -> FastMCP:
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "[::1]"})
 
 
-class _LoopbackHostOnly:
-    """DNS-rebinding protection for the PARENT app's own routes.
+class _LocalRequestsOnly:
+    """Guard REST and MCP together, before either dispatches a request.
 
-    FastMCP validates `Host` for its sub-apps, but `/search`, `/capture`,
-    `/jobs`, `/events` and `/shutdown` are registered on the parent — so with
-    the default `token=None` a page on any website could point a name it
-    controls at 127.0.0.1 and POST to `/shutdown` or `/jobs/rescan`.
-
-    The Host NAME is compared literally, never resolved: resolving it would be
-    a DNS lookup per request whose answer the attacker writes. 421 Misdirected
-    Request mirrors FastMCP's own answer, so both halves of the app behave
-    alike."""
+    Literal loopback Hosts prevent DNS rebinding. Browser Origins must also
+    match the request's origin: a cross-site simple POST can otherwise reach
+    a valid loopback Host without a CORS preflight. Native clients omit Origin.
+    Neither check replaces bearer authentication against other local clients.
+    """
 
     def __init__(self, app, allowed=LOOPBACK_HOSTS):
         self.app, self.allowed = app, frozenset(allowed)
@@ -92,12 +89,35 @@ class _LoopbackHostOnly:
         name, _, port = raw.rpartition(":")
         return name if name and port.isdigit() else raw       # ':' inside an IPv6 literal is not a port
 
+    @staticmethod
+    def _origin(value):
+        try:
+            parsed = urlsplit(value)
+            if (parsed.scheme not in ("http", "https") or not parsed.hostname
+                    or parsed.username is not None or parsed.password is not None
+                    or parsed.path or parsed.query or parsed.fragment):
+                return None
+            port = parsed.port if parsed.port is not None else (443 if parsed.scheme == "https" else 80)
+            return parsed.scheme, parsed.hostname, port
+        except ValueError:
+            return None
+
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http" and self._hostname(scope).lower() not in self.allowed:
             await JSONResponse({"error": "invalid Host header",
                                 "guidance": "the daemon serves 127.0.0.1 only"},
                                status_code=421)(scope, receive, send)
             return
+        if scope["type"] == "http":
+            headers = scope.get("headers", ())
+            origins = [v.decode("latin-1") for k, v in headers if k == b"origin"]
+            host = next((v.decode("latin-1") for k, v in headers if k == b"host"), "")
+            expected = self._origin(f"{scope['scheme']}://{host}")
+            if origins and (len(origins) != 1 or expected is None or self._origin(origins[0]) != expected):
+                await JSONResponse({"error": "invalid Origin header",
+                                    "guidance": "browser requests must use the daemon's own origin"},
+                                   status_code=403)(scope, receive, send)
+                return
         await self.app(scope, receive, send)
 
 
@@ -182,5 +202,5 @@ def mount(full: FastMCP, ro: FastMCP, extra_routes=None, on_startup=None, on_shu
     # after this and Starlette inserts at index 0, so with a token configured
     # an unauthorized request off a rebound host answers 401 before 421 — the
     # right order anyway.
-    app.add_middleware(_LoopbackHostOnly)
+    app.add_middleware(_LocalRequestsOnly)
     return app

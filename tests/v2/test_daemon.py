@@ -109,6 +109,38 @@ def test_host_header_must_be_loopback(cfg, store, tmp_path):
         assert c.get("/status", headers={"Host": "evil.com"}).status_code == 421
 
 
+def test_cross_origin_browser_requests_cannot_mutate(cfg, store, tmp_path, monkeypatch):
+    """A simple browser POST keeps a valid loopback Host and needs no preflight."""
+    d = _daemon(cfg, store, tmp_path)
+    stopped = []
+    monkeypatch.setattr(d, "stop", lambda: stopped.append(True) or True)
+    origins = ("https://example.com", "null", "http://127.0.0.1:8421",
+               "http://127.0.0.1:8420.example.com", "http://127.0.0.1:bad",
+               "http://user@127.0.0.1:8420", BASE + "/path")
+    with held(d), TestClient(d.build(), base_url=BASE) as c:
+        d.mutations.run("drain", lambda: None, timeout=10)
+        rescans = d.app.events.count("index.rescan")
+        for origin in origins:
+            headers = {"Origin": origin, "Content-Type": "text/plain"}
+            for path, body in (("/capture", '{"content":"body","title":"test","project":"p"}'),
+                               ("/jobs/rescan", ""), ("/shutdown", "")):
+                response = c.post(path, content=body, headers=headers)
+                assert response.status_code == 403, (origin, path, response.text)
+        assert not stopped
+        assert not d.app.lanes.capture_files()
+        assert d.app.events.count("index.rescan") == rescans
+
+
+def test_same_origin_and_native_clients_remain_supported(cfg, store, tmp_path):
+    d = _daemon(cfg, store, tmp_path)
+    with held(d), TestClient(d.build(), base_url=BASE) as c:
+        for headers in ({}, {"Origin": BASE},
+                        {"Host": "localhost:80", "Origin": "http://localhost"}):
+            assert c.get("/healthz", headers=headers).status_code == 200
+            assert c.post("/jobs/rescan", headers=headers).status_code == 200
+        assert c.get("/healthz", headers=[("Origin", BASE), ("Origin", "null")]).status_code == 403
+
+
 def test_events_n_is_clamped(cfg, store, tmp_path):
     """`int(-1)` reached SQLite's `LIMIT -1`, which means unlimited."""
     d = _daemon(cfg, store, tmp_path)

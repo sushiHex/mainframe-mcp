@@ -84,6 +84,25 @@ Its memory workflow currently supports capture, indexing, and search. v1 remains
 the default and retains consolidation, contradiction detection, and RAPTOR.
 See [the v2 guide](docs/V2.md) for setup, commands, architecture, and recovery.
 
+### Validate a v2 deployment
+
+Start with one explicitly included project and a separate state directory.
+Use `/healthz` for frequent liveness probes and `mainframe status` for index,
+queue, and model diagnostics. Browser requests must come from the daemon's
+own origin; configure `service.token` to authenticate local clients as well.
+
+Before GPU work, check available memory and coordinate capacity with other
+clients. If you use `vram-mcp`, reserve capacity for Mainframe's non-Ollama
+models, renew the reservation while running, and release it after shutdown.
+Reservations are cooperative and cannot prevent unrelated GPU allocations.
+
+Run the [retrieval gate](eval/README.md) against the same indexed corpus,
+queries, and model settings as your baseline. Then exercise repeated searches
+and file changes during a scoped soak, recording health latency, queue depth,
+rescan counts, and errors. Keep private queries and raw logs outside public Git.
+Synthetic smoke success establishes operation; it does not establish retrieval
+quality or a production latency guarantee.
+
 ## v1 MCP tools
 
 | Tool | Purpose |
@@ -120,7 +139,8 @@ Swap any of them via config or env (`MAINFRAME_RERANKER_MODEL`, etc.). `BAAI/bge
 
 ```bash
 python -m pytest tests/           # GPU-free suite (fakes + real LanceDB) — no GPU, no models, no network
-python -u eval/evaluate.py --live # GPU eval against YOUR OWN live index (--min-score to gate)
+python -u eval/evaluate_v1.py --live # v1: evaluate your existing index
+python -u eval/evaluate.py --daemon # v2: evaluate through the running daemon
 ```
 
 The eval measures against your local corpus and GPU — **it cannot validate a PR by itself** (see the ground rules in [`eval/results.template.md`](eval/results.template.md)); retrieval-affecting changes get re-measured on the maintainer's corpus before merge.
