@@ -1,82 +1,60 @@
-# Mainframe MCP Evaluation Framework
+# Retrieval Evaluation
 
-## Overview
+Evaluate retrieval against your own corpus and expected answers. The GPU-free
+pytest suite checks behavior; this harness measures retrieval quality.
 
-Automated parameter optimization for the Mainframe RAG system. Uses autoresearch pattern: hypothesize → modify → test → evaluate → keep or discard → repeat.
-
-## Quick Start
-
-```bash
-# Run a single eval against the live index
-python eval/evaluate.py --live
-
-# View results history
-python eval/history.py --best
-```
-
-## Test Corpus
-
-The eval runs against YOUR live index (or a temp rebuild of it) with a
-corpus-specific query set: `eval/test_queries.json` (gitignored — it inevitably
-describes your private corpus). `eval/test_queries.example.json` documents the
-format. Record experiments in `eval/results.md` following
-`eval/results.template.md`.
-
-## Eval Modes
-
-| Mode | Command | Speed | What it tests |
-|---|---|---|---|
-| `--live` | Uses existing index | ~40s | Search params, tier boosts, reranking |
-| `--rebuild` | Rebuilds temp index | ~15min | Chunking params + search params |
-
-## Autoresearch Sessions
-
-Each session tests a specific category of parameters. Open a new Claude Code session in this directory, provide the session instructions, let it iterate.
-
-### Session Types
-
-**Session A: Search & Ranking (fast, ~40s/run)**
-```
-Read eval/sessions/search-ranking.md and optimize.
-```
-Parameters: FETCH_MULTIPLIER, RERANK_TOP_K
-
-**Session B: Tier Boost Weights (fast, ~40s/run)**
-```
-Read eval/sessions/tier-boosts.md and optimize.
-```
-Parameters: LIBRARY_BOOST, PROJECT_BOOST, DOCS_BOOST, RESEARCH_BOOST, ARCHIVE_BOOST
-
-**Session C: Model Swaps (slow, ~15min/run)**
-```
-Read eval/sessions/model-swap.md and optimize.
-```
-Swaps embedding model and/or reranker, rebuilds index, evaluates.
-
-**Session D: Chunking (slow, ~15min/run)**
-```
-Read eval/sessions/chunking.md and optimize.
-```
-Parameters: CHUNK_SIZE, OVERLAP_RATIO, MIN_SECTION_TOKENS
-
-## Results
-
-Each run auto-saves to `eval/results/YYYYMMDD-HHMMSS.json`.
+## Select the implementation
 
 ```bash
-python eval/history.py              # all runs
-python eval/history.py --best       # top 10 by score
-python eval/history.py --last 5     # most recent 5
+# v2: running daemon, or configured index when it is stopped
+python -u eval/evaluate.py --live
+
+# v2: require the daemon and avoid loading models here
+python -u eval/evaluate.py --daemon
+
+# v1: original stdio server's index
+python -u eval/evaluate_v1.py --live
 ```
 
-## Scoring
+Use the same configuration and query set for comparisons. Set `MAINFRAME_CONFIG`
+for the v2 deployment being evaluated. The legacy v1 harness expects the default
+`~/.claude/mainframe` state directory. Never run a second GPU-heavy evaluation
+alongside an existing model allocation.
 
-Composite: 40% MRR + 30% hit@1 + 30% text_match@1. Higher is better.
+## v2 modes
 
-| Metric | What it measures |
+| Option | Behavior |
 |---|---|
-| hit@1 | Correct file in the #1 result |
-| hit@3 | Correct file in top 3 |
-| hit@5 | Correct file in top 5 |
-| MRR | Mean reciprocal rank (how high is the correct result) |
-| text_match@1 | Expected keyword in the #1 result's text |
+| Default / `--live` | Uses the running daemon; otherwise opens the configured v2 index, or builds a temporary index if absent |
+| `--daemon` | Requires the daemon; scores HTTP search with full chunk text |
+| `--db PATH` | Opens an existing populated v2 index; refuses v1 schemas |
+| `--rebuild` | Replaces `eval/.eval-lancedb` with a deterministic rebuild |
+| `--corpus-manifest PATH` | Restricts a rebuild to existing non-session files in a v1 manifest |
+| `--dump-candidates PATH` | Saves raw candidate identities for deterministic comparisons |
+| `--min-score NUMBER` | Exits 1 below the supplied composite-score baseline |
+
+`--db` and `--rebuild` refuse while the configured daemon is running. Explicit
+`--in-process` and candidate dumps load their own models; stop other GPU-heavy
+work first. Compare discovery with a v1 manifest using
+`python -u eval/corpus_identity.py path/to/.manifest.json`. The gate fails when
+a still-existing manifest file is missing from the v2 scan; new files and
+content changes are reported separately.
+
+## Queries, results, and measurement
+
+Copy `eval/test_queries.example.json` to gitignored `eval/test_queries.json`
+and supply queries, expected files, and optional expected text. The example
+set demonstrates the format; its scores are not a corpus baseline.
+
+Runs save local JSON under `eval/results/`. Review with
+`python eval/history.py --best` or `python eval/history.py --last 5`.
+
+The composite is **40% MRR + 30% hit@1 + 30% text_match@1**. Both v2 paths
+use the same top-three rank window. Daemon `hit_at_5` is `null` because ranks
+four and five are not requested. Text matching uses complete chunks.
+
+Change one variable at a time and record corpus identity, configuration,
+models, timing, and repeated runs against the same baseline. Follow
+`results.template.md`; keep corpus-specific logs in gitignored `results.md`.
+Query sets, candidate dumps, and results can expose private paths and project
+details. Audit any proposed publication before uploading it.

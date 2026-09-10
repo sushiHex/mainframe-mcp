@@ -67,7 +67,24 @@ mcp_servers:
     connect_timeout: 60
 ```
 
-## MCP tools
+## v2 daemon preview
+
+The optional `mainframe` command runs one background service for multiple MCP
+clients. It watches files, reconciles missed changes, and exposes HTTP MCP at
+`http://127.0.0.1:7433/mcp`; `/mcp/ro` exposes only search and status. Stdio-only
+clients can use `python -u -m mainframe.adapters.mcp_stdio_shim`.
+
+Configure `paths.include_projects` before running `mainframe serve`: an empty
+list includes all eligible projects under `paths.repos_dir`. The daemon builds
+its own `index.lancedb`, separate from v1's `.lancedb`. Index-setting drift is
+reported explicitly; rebuilding requires stopping the daemon first.
+
+v2 includes model recovery, immutable captures, and verified source citations.
+Its memory workflow currently supports capture, indexing, and search. v1 remains
+the default and retains consolidation, contradiction detection, and RAPTOR.
+See [the v2 guide](docs/V2.md) for setup, commands, architecture, and recovery.
+
+## v1 MCP tools
 
 | Tool | Purpose |
 |------|---------|
