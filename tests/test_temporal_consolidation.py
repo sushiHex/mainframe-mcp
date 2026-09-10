@@ -69,7 +69,7 @@ def test_search_prefers_recent_among_equal(tmp_path):
                        "char_end": 1, "token_count": 9}], "dold", "C:/old.md", "research", [e], [h + "x"])
     # age the "old" doc
     old_ts = (datetime.now() - timedelta(days=400)).isoformat()
-    st.table.update(where='doc_path = "C:/old.md"', values={"created_at": old_ts})
+    st.table.update(where="doc_path = 'C:/old.md'", values={"created_at": old_ts})
 
     res = st.search(emb.embed_query(text), top_k=5, query_text="")
     paths = [r["doc_path"] for r in res]

@@ -5,7 +5,7 @@ GPU-accelerated semantic knowledge base MCP server for Claude Code. Replaces mcp
 ## Stack
 - Python 3.10+, PyTorch CUDA 12.8, sentence-transformers, LanceDB
 - RTX 3090 (24GB VRAM): Qwen3-8B Q8 (9GB) + Qwen3-Reranker-4B INT8 (4.5GB; bge-v2-m3 1.2GB fallback) + DeBERTa NLI (0.8GB) + Qwen2.5-3B Q4 (2.1GB) ≈ 16.4GB peak
-- NOTE for public-repo readers: that sizing is the maintainer's deployment, not a requirement — `configs/` ships cpu-only/gpu-light/gpu-minimal presets, and the test suite needs no GPU at all. References to `research/…` and `eval/results.md` point at the maintainer's private research lane (excluded from the public mirror; see CONTRIBUTING.md).
+- NOTE for public-repo readers: that sizing is the maintainer's deployment, not a requirement — `configs/` ships cpu-only/gpu-light/gpu-minimal presets, and the test suite needs no GPU at all. References to `research/…` and `eval/results.md` point at the maintainer's private research lane (kept outside this public repository; see CONTRIBUTING.md).
 
 ## Structure
 ```
@@ -53,7 +53,7 @@ eval/
 
 ## Ambient capture (Phase 1)
 - `capture_memory(content, title, project=None, kind="session", session_id="")` MCP tool: the live agent authors a dense markdown note, the server writes ONE immutable file under `<repo>/research/sessions/` (fallback `~/.claude/mainframe/library/sessions/` when cwd is outside `~/repos`), then reuses `ingest_file` verbatim. 100% local, no extra model load.
-- `research/sessions/` is the **raw, gitignored lane** — only curated, human-reviewed `research/memory/` notes are git-tracked (Phase 3). Secrets are scrubbed (`secrets.py`) before write; the gitignore is the primary leak defense.
+- `research/sessions/` is the **raw, gitignored lane**. Curated `research/memory/` notes remain in the private knowledge corpus; neither lane belongs in this public source repository. Secrets are scrubbed (`secrets.py`) before write, and the public repo ignores all `research/` data.
 - **One immutable file per capture — never overwrite a session file.** Overwriting re-triggers the append/dedup data-loss bug (`existing_hashes` is collected before `delete_by_doc`). Filenames carry `<HHMMSS>` + content hash + a collision counter.
 - `source_type="session"`, derived by the anchored test `"/research/sessions/" in path_str` placed BEFORE the `/research/` branch (order is load-bearing). Tier boost `session: 1.05` (marginal FTS-tail aid only).
 - **`search` excludes `source_type="session"` by default** — pass `include_sessions=true` to include captures. This filter (not the near-inert tier boost) is the real precision defense: it keeps accreted session chunks out of the fixed vector candidate pool.
@@ -75,7 +75,7 @@ eval/
 - **`Store.optimize()`** (compaction + version cleanup + FTS refresh) runs after `sync_index`/`ingest_projects` batches that changed anything, and now also **creates the FTS index if missing** (a brand-new mainframe_dir otherwise ran its whole first session vector-only). Without it nothing ever compacts, and **rows inserted after the FTS index was created are invisible to keyword search** until an optimize pass. Never run concurrently with another writer. **FTS detection matches both 'INVERTED' and 'FTS' index_type spellings** — the INVERTED-only check re-created the index on every process start (26 unpruned generations, +193MB, from eval runs alone; fixed + live DB compacted 881->645MB on 2026-07-02).
 - **Manifest writes are atomic** (tmp + `os.replace`, previous version rotated to `.manifest.json.bak`); a corrupt manifest falls back to `.bak` → empty instead of bricking startup.
 - **`_ingest_paths` survives poison files** — a raising `ingest_file` (CUDA fault etc.) is logged into `errors` and the batch continues. **Batch ingests build ONE `dedup.DonorCache`** (hash->doc-paths, maintained incrementally: remove-before-delete, add-after-insert) instead of a full projected table scan PER FILE (an 88-file sync scanned 37K rows 88 times before this). Empty/whitespace files return `status="empty"` (a skip, not an error). **`hf_offline_if_cached(config)`** sets `HF_HUB_OFFLINE=1` at server/eval startup when every enabled model is already cached — a hub outage can no longer hang the pre-warm (stays online on first run/model swap; respects an explicit user env).
-- **Consolidation output is re-scrubbed** (`scrub_secrets`) before the git-tracked `research/memory/` write — the note is `research`-typed (searchable, committable), so a secret missed at capture time must not be promoted out of the gitignored session lane.
+- **Consolidation output is re-scrubbed** (`scrub_secrets`) before writing curated `research/memory/` notes. They become searchable but remain private data; scrubbing is not permission to publish them.
 - **`secrets.py`**: the KV pattern matches keyword-SUFFIX identifiers (`AWS_SECRET_ACCESS_KEY=`, `DB_PASSWORD=` — a bare `\b` never fires inside SCREAMING_SNAKE); also Stripe `sk_live_`/`whsec_`, GCP `GOCSPX-`, and `scheme://user:pass@host` URL creds (password-only redaction).
 - **`project` args are validated** (`_SAFE_NAME_RE`, no separators/leading dot) and `session_id` is sanitized before becoming a filename component — blocks `../` traversal out of `repos_dir`.
 
@@ -86,10 +86,11 @@ eval/
 - **`consolidate_sessions` days default is 0 = ALL pending sessions** (a fixed window stranded older captures forever). Re-consolidation returns `note_bloat_warning: true` when the merge grew >2× the prior body (LLM accreting instead of superseding).
 - **`eval/evaluate.py` mirrors production**: candidate pool floor (`CANDIDATE_POOL=20`, was 6 — old scores are NOT comparable), recency wiring from config, and a `--min-score` regression gate (exit 1). GPU-free suite runs in CI (`.github/workflows/tests.yml`); test deps via `pip install -e .[test]`.
 
-## Public mirror (github.com/sushiHex/mainframe-mcp)
-- MAINTAINER-ONLY (meaningless in a fork): dev happens on `origin` (mainframe-mcp-private, full history). The public repo is a squashed single-commit snapshot: run `bash scripts/publish_mirror.sh` (clean tree required) — it rebuilds the orphan `public` branch, excludes the PRIVATE-BY-POLICY paths, leak-greps, and force-pushes `public:main`.
-- **External PRs land on the PUBLIC repo but are never merged there** (its `main` is force-replaced by every mirror refresh): apply the PR as a patch to master here (keep attribution in the commit message), refresh the mirror, close the PR with a landed-in note. CONTRIBUTING.md + the PR template document this for contributors; CI runs a leak-check job on public PRs.
-- **Private by policy, tracked in master but never published**: `research/` (ALL research, regardless of audit verdict), `eval/results.md` (real experiment log — `eval/results.template.md` ships instead), `eval/sessions/`, `docs/mainframe-mcp-design.md`. The exclusion list lives in the script — add there, not ad hoc.
+## Public development and audit
+- The public `sushiHex/mainframe-mcp` repository is the primary development home. Branch from public `main`; code, issues, reviews, and releases live there.
+- The private repository holds non-public data, captures, research, and corpus-specific experiment records. Transfer only reviewed code changes onto public history; never merge private ancestry or replace public history with a snapshot.
+- Every public push requires the audit in `docs/PUBLIC_AUDIT.md`, including tests, documentation, intermediate commits, messages, and artifacts. Record the exact audited SHA and review all findings before publishing. CI repeats automated checks after publication and cannot substitute for the pre-push review.
+- `scripts/publish_mirror.sh` is retired and exits without modifying files, branches, or remotes.
 
 ## Head-to-toe wave (2026-07-02 — see the 10-POV review doc for provenance)
 - **Memory loop V1**: `sync_index` + `status` return `pending_sessions` (per-project un-consolidated capture counts via `session_capture.pending_sessions_by_project`) and a `consolidation_hint` at `memory.consolidate_threshold` (5) — the agent decides, no daemon. `consolidate_sessions` **topic defaults to the project name** (one curated note per project; explicit topic still supported). The capture hooks are VERIFIED FIRING in production (2026-07-16: 130 events in `~/.claude/mainframe/hook.log`, session captures across 12+ repos; the first real capture also exposed two `_FILE_PATH_RE` bugs — URL tails and version-number dirs matched as file paths — both fixed with regression tests).

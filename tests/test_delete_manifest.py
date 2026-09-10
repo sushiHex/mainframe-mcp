@@ -2,6 +2,23 @@
 
 from pathlib import Path
 
+import pytest
+
+
+@pytest.mark.parametrize("name", ["O'Brien.md", "x' OR true OR 'y.md"])
+def test_delete_quoted_path_preserves_other_documents(mainframe, name):
+    mf = mainframe
+    docs = Path(mf.config["paths"]["repos_dir"]) / "project" / "docs"
+    docs.mkdir(parents=True)
+    quoted = docs / name
+    neighbor = docs / "neighbor.md"
+    quoted.write_text("# Cobalt\n\nTelemetry receipts persist before spool acknowledgment.\n", encoding="utf-8")
+    neighbor.write_text("# Quartz\n\nAstronomy observations chart distant planetary orbits.\n", encoding="utf-8")
+    for path in (quoted, neighbor):
+        assert mf.ingest_file(str(path))["status"] == "ingested"
+    assert mf.delete_file(str(quoted))["status"] == "deleted"
+    assert set(mf.store.table.to_pandas()["doc_path"]) == {str(neighbor)}
+
 
 def test_delete_file_syncs_manifest_and_allows_reingest(mainframe):
     mf = mainframe

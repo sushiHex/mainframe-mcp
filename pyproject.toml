@@ -14,7 +14,8 @@ dependencies = [
     "lancedb>=0.15",
     "sentence-transformers>=3.0",
     "transformers>=4.40",
-    "mcp>=1.0",
+    # The server uses the 1.x low-level Server decorators; 2.x removes list_tools.
+    "mcp>=1.0,<2",
     "tantivy>=0.22",
     # Store's projected reads (dedup hash scans, stats) go through
     # table.to_lance() — lancedb does NOT pull pylance in on its own, and

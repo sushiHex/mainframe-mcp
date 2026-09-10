@@ -1,0 +1,16 @@
+title = "Public repository audit"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "personal-user-path"
+description = "Personal filesystem path requires publication review"
+regex = '''(?i)(?:[a-z]:[/\\]+users[/\\]+|/(?:home|users)/)([a-z0-9._-]+)'''
+secretGroup = 1
+
+[[rules.allowlists]]
+description = "Synthetic usernames in existing path-handling tests"
+condition = "AND"
+paths = ['''^tests/''']
+regexes = ['''^(?:x|dev)$''']
