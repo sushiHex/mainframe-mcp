@@ -14,6 +14,12 @@ import pyarrow as pa
 
 logger = logging.getLogger(__name__)
 
+
+def _sql_str(value: str) -> str:
+    """Quote a SQL value; double quotes denote identifiers in current LanceDB."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 # Source type for ambient session captures — centralized so the ingest
 # classifier, the default search exclusion, the dedup donor scope, and the
 # RAPTOR skip can't drift apart on a rename.
@@ -206,7 +212,7 @@ class Store:
 
     def delete_by_doc(self, doc_path: str):
         """Delete all chunks for a document."""
-        self.table.delete(f'doc_path = "{doc_path}"')
+        self.table.delete(f"doc_path = {_sql_str(doc_path)}")
         logger.info(f"Deleted chunks for {doc_path}")
 
     def search(
@@ -235,7 +241,7 @@ class Store:
         if tier_filter is not None:
             conds.append(f"tier = {tier_filter}")
         if exclude_source_type:
-            conds.append(f'source_type != "{exclude_source_type}"')
+            conds.append(f"source_type != {_sql_str(exclude_source_type)}")
 
         def _vec_query():
             q = self.table.search(query_embedding).limit(top_k)
