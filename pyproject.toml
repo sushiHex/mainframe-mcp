@@ -29,6 +29,12 @@ dependencies = [
     "accelerate>=0.26",
     # store.search imports pandas at runtime to merge vector+FTS candidates.
     "pandas>=2.0",
+    # v2 file watching, process ownership, and local HTTP transport.
+    "watchdog>=6.0",
+    "filelock>=3.12",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+    "starlette>=0.40",
 ]
 
 [project.urls]
@@ -37,6 +43,7 @@ Issues = "https://github.com/sushiHex/mainframe-mcp/issues"
 
 [project.scripts]
 mainframe-mcp = "mainframe_mcp.server:main"
+mainframe = "mainframe.adapters.cli:main"
 
 [project.optional-dependencies]
 consolidation = ["llama-cpp-python>=0.3"]
@@ -47,6 +54,7 @@ test = ["pytest>=8.0", "numpy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: real filesystem watchers and timing (deselect with -m 'not slow')"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

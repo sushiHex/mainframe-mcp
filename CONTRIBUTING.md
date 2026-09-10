@@ -34,10 +34,11 @@ way: new tests must not load models, hit the network, or assume CUDA. CI runs
 exactly `python -m pytest tests/` on a CPU-only Linux runner — if it doesn't
 pass there, it doesn't merge.
 
-Note for agents reading `CLAUDE.md`: the sections about the live index
-(`~/.claude/mainframe`), SessionStart/SessionEnd hooks, VRAM budgets, and
-"never run two GPU scripts" describe the **maintainer's deployment**, not your
-fork. You cannot and need not reproduce that environment to contribute.
+Use temporary directories for indexes and captures. The v2 suite also drives
+real filesystem watchers; its `slow` tests run by default. During iteration,
+`python -m pytest tests/v2/ -m "not slow"` skips those timing checks. See
+[the v2 guide](docs/V2.md) for service setup; a live deployment is not required
+to contribute.
 
 ## What a PR must include
 
@@ -94,7 +95,9 @@ mean exactly that.
 | Path | What it is |
 |------|-----------|
 | `src/mainframe_mcp/` | The server — one module per concern (see `CLAUDE.md` for the map) |
+| `src/mainframe/` | v2 preview: indexing/search core, memory lanes, daemon service, CLI/MCP adapters |
 | `tests/` | GPU-free suite; `conftest.py` has the fake-embedder harness |
+| `tests/v2/` | v2 regressions, real temporary stores, watcher and transport coverage |
 | `eval/` | The measurement harness + experiment-log template |
 | `configs/` | VRAM-tier presets |
 
