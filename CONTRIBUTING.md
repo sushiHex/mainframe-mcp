@@ -4,23 +4,22 @@ Contributions are welcome — from humans and from coding agents. This document
 is written for both; if you are an autonomous agent, treat it as binding
 instructions for any PR you open here.
 
-## The two-repo architecture (read this first)
+## Public development and private data
 
-Development happens in a **private repository** with full history. The public
-repo you are looking at is a **squashed snapshot mirror**: its `main` branch is
-force-pushed on every release, and its single-commit history is rebuilt each
-time.
+**This public repository is the primary development home.** Code, issues,
+reviews, and releases belong here. Branch from `main` and merge reviewed pull
+requests directly into public `main`; preserve its history.
 
-Consequences for pull requests:
+The private repository stores non-public data, research, captures, and
+corpus-specific experiment records. It is not the upstream for public code.
+When bringing over a code fix, review and transfer only the required public
+files onto a public branch. Never merge private Git history or force-push a
+replacement snapshot over public `main`. The old mirror publisher is retired.
 
-- **PRs against public `main` are never merged directly.** Merging into a
-  branch that gets force-replaced would destroy the merge on the next refresh.
-- Instead, the maintainer applies your change to the private repo (preserving
-  attribution in the commit message), the mirror is refreshed, and your PR is
-  closed with a comment when your change ships. Your diff lands; your commit
-  SHA doesn't survive.
-- Keep PRs small and self-contained — they are applied as patches, so a
-  focused diff with tests is far easier to land than a sprawling one.
+**Every public push requires an audit first**, including branch pushes before
+opening a PR. Follow [the public audit procedure](docs/PUBLIC_AUDIT.md), review
+all findings, and record the exact audited commit. CI repeats the automated
+checks; it cannot replace the review before publication.
 
 ## Dev setup
 
@@ -49,10 +48,10 @@ fork. You cannot and need not reproduce that environment to contribute.
 2. **A green suite locally**: `python -m pytest tests/`.
 3. **Honest claims.** Never assert a retrieval-quality improvement without
    measurement (see below). Never claim "tests pass" without running them.
-4. **No secrets, no personal data.** Nothing matching `secrets.py`'s denylist
-   patterns, no absolute personal paths, no real API keys even as test
-   fixtures (use obviously-fake values like the existing tests do). A CI
-   leak-check runs on every PR.
+4. **No secrets, no personal data.** No absolute personal paths, private
+   corpora, or real API keys even as test fixtures. Use obviously synthetic
+   examples. Include the public-audit result; tests and documentation are
+   subject to the same review as source code.
 5. **Docs updated** when behavior changes: `CLAUDE.md` is the agent-facing
    project brief — keep it truthful; `README.md` for user-facing changes.
 

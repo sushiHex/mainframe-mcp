@@ -5,7 +5,7 @@ name: tests
 
 on:
   push:
-    branches: [master, main]  # master = private dev; main = the public mirror
+    branches: [main]
   pull_request:
 
 jobs:
@@ -25,50 +25,33 @@ jobs:
       - name: Run suite
         run: python -m pytest tests/ -q
 
-  # Contributor PRs must not introduce secrets or the maintainer's private
-  # markers. Public mirror only: the private dev repo legitimately contains
-  # tracked research/ and experiment logs that this grep would flag.
-  leak-check:
-    if: github.repository == 'sushiHex/mainframe-mcp' && github.event_name == 'pull_request'
+  # Repeat the required pre-push audit after publication. Tests are included.
+  public-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Grep for secrets and private markers
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Audit private paths and file types in all reachable commits
+        run: python scripts/audit_public_paths.py
+      - name: Install checksum-pinned Gitleaks
+        shell: bash
         run: |
-          set -e
-          # same family as scripts/publish_mirror.sh's gate + basic credential shapes
-          PATTERNS='kfaim|sk-ant-|ghp_[A-Za-z0-9]{30}|github_pat_|AKIA[0-9A-Z]{16}|sk_live_|whsec_[A-Za-z0-9]{20}|GOCSPX-|xox[baprs]-|BEGIN [A-Z]* ?PRIVATE KEY'
-          BASE_SHA='${{ github.event.pull_request.base.sha }}'
-          git fetch --no-tags --depth=1 origin "$BASE_SHA"
-
-          CHANGED_FILE=$(mktemp)
-          BLOB_FILE=$(mktemp)
-          trap 'rm -f "$CHANGED_FILE" "$BLOB_FILE"' EXIT
-          git diff --name-only -z --diff-filter=ACMRT "$BASE_SHA" HEAD > "$CHANGED_FILE"
-
-          HITS=""
-          while IFS= read -r -d '' file; do
-            case "$file" in
-              tests/*|src/mainframe_mcp/secrets.py|.github/workflows/tests.yml) continue ;;
-            esac
-            if ! git cat-file blob "HEAD:$file" > "$BLOB_FILE"; then
-              echo "::error::could not read changed Git blob: $file"
-              exit 1
-            fi
-            if grep -aqE "$PATTERNS" "$BLOB_FILE"; then
-              HITS+="$file"$'\n'
-            else
-              status=$?
-              if [ "$status" -ne 1 ]; then
-                echo "::error::could not scan changed Git blob: $file"
-                exit 1
-              fi
-            fi
-          done < "$CHANGED_FILE"
-
-          if [ -n "$HITS" ]; then
-            echo "::error::possible secret or private marker in: $HITS"
-            exit 1
-          fi
-          echo "leak-check clean"
+          set -euo pipefail
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl --fail --silent --show-error --location \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb "$archive" | sha256sum --check -
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/gitleaks" gitleaks
+      - name: Scan secrets and personal paths including tests and history
+        run: >-
+          "$RUNNER_TEMP/gitleaks/gitleaks" git --redact --ignore-gitleaks-allow
+          --max-decode-depth 2 --max-archive-depth 2 --log-opts="--all --full-history" .

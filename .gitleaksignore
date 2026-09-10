@@ -1,0 +1,9 @@
+# Reviewed synthetic scrubber fixtures in already-public history, 2026-09-10.
+# Exact commit/path/rule/line fingerprints for placeholder API/account values
+# and one fabricated Stripe token; no directory or rule is exempted.
+# See docs/PUBLIC_AUDIT.md. New findings require their own review.
+7776bbbff974e8e696a065381c4e593ce2f414ba:tests/test_tier0_hardening.py:generic-api-key:125
+7776bbbff974e8e696a065381c4e593ce2f414ba:tests/test_tier0_hardening.py:generic-api-key:127
+d986320ef9d3cc35616adf7eb14b232ef6727998:tests/test_tier0_hardening.py:generic-api-key:125
+d986320ef9d3cc35616adf7eb14b232ef6727998:tests/test_tier0_hardening.py:generic-api-key:127
+d986320ef9d3cc35616adf7eb14b232ef6727998:tests/test_tier0_hardening.py:stripe-access-token:132

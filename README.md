@@ -14,7 +14,7 @@ Everything runs on your own GPU. Nothing leaves your machine at query time.
 
 - **Hybrid retrieval, reranked** — vector nearest-neighbor (Qwen3-Embedding-8B, INT8) + Tantivy full-text search, merged and re-scored by a cross-encoder reranker. Markdown-header-aware 256-token chunking, adaptive per-query-type instruct prefixes, section-heading injection at rerank time.
 - **Native Qwen3-Reranker backend** — the reranker scores candidates via the model's yes/no logits with a task instruction (the model-card method), not a bolted-on classification head. On our eval this beat bge-reranker-v2-m3 by **+26% composite / +33% hit@1**.
-- **Ambient memory (mem0-inspired)** — agents write immutable session-capture files (secret-scrubbed, gitignored lane); a consolidation pass merges them into curated, git-tracked memory notes where **newer facts supersede stale ones**, with NLI-backed contradiction surfacing and anti-bloat guardrails. Files are the source of truth — the vector index is derived and disposable.
+- **Ambient memory (mem0-inspired)** — agents write immutable session-capture files (secret-scrubbed, gitignored lane); a consolidation pass merges them into curated memory notes where **newer facts supersede stale ones**, with NLI-backed contradiction surfacing and anti-bloat guardrails. Keep private notes in your private knowledge corpus. Files are the source of truth — the vector index is derived and disposable.
 - **Ops-hardened** — read-only search hot path, atomic manifest writes with crash recovery, index compaction + FTS refresh after ingest batches, poison-file-resilient syncs, path-traversal validation, and a layered secret-scrub denylist on every write path.
 - **Measured, not vibed** — an eval harness with a regression gate (`eval/evaluate.py --min-score`), an experiment-log discipline (`eval/results.template.md`), and a GPU-free test suite (fakes + real LanceDB) that runs in CI.
 
@@ -112,7 +112,7 @@ Log every experiment in `eval/results.md` following `eval/results.template.md` �
 
 ## Contributing
 
-PRs from humans and coding agents are welcome — **read [CONTRIBUTING.md](CONTRIBUTING.md) first**: this repo's `main` is a force-pushed mirror snapshot, so PRs are applied as patches to the private development repo (with attribution) and ship in the next refresh rather than merging directly. Tests are GPU-free by design; retrieval-affecting changes get measured on the eval harness before landing.
+This public repository is the primary development home. PRs from humans and coding agents merge into public `main` after review and validation. **Read [CONTRIBUTING.md](CONTRIBUTING.md) and complete the [public push audit](docs/PUBLIC_AUDIT.md) before pushing.** Keep non-public data in the private repository. Tests are GPU-free by design; retrieval-affecting changes get measured on the eval harness before landing.
 
 ## License
 

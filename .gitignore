@@ -8,10 +8,17 @@ dist/
 build/
 .manifest.json
 
-# Raw, transcript-derived session captures (ambient capture, Phase 1).
-# Gitignored as the primary secret-leak defense — only curated, human-reviewed
-# research/memory/ notes are git-tracked. See CLAUDE.md "Ambient capture".
-research/sessions/
+# Non-public research, captures, configuration, and experiment records.
+research/
+captures/
+eval/sessions/
+docs/superpowers/
+docs/mainframe-mcp-design.md
+config.json
+.env
+.env.*
+!.env.example
+index.lancedb/
 
 # Corpus-specific eval fixtures: the query set and per-run result JSONs
 # inevitably describe the owner's PRIVATE corpus (project names, file paths).
