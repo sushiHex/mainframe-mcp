@@ -81,6 +81,10 @@ uses the configured state directory. `eval/evaluate_v1.py` retains the v1
 harness. See `eval/README.md`.
 
 Use a synthetic corpus and separate state directory for live smoke tests.
+`mainframe validate --output ~/mainframe-validation/run-01` owns a fresh
+synthetic scope and daemon; add `--duration 1800` for a soak. It refuses existing
+output directories and paths inside Git. Keep its config, logs, and JSON report
+private. Unit tests exercise the same validation flow with fake models.
 Check available memory before loading models; never run two heavy GPU jobs
 concurrently. Use unbuffered Python (`-u`) for long checks and offline model
 loading when selected weights are already cached. Do not claim retrieval

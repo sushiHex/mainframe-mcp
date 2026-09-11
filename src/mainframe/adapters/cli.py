@@ -143,10 +143,22 @@ def main(argv=None, config=None, http=None, runner=None) -> int:
     t = sub.add_parser("install-task"); t.add_argument("--dry-run", action="store_true")
     c = sub.add_parser("capture"); c.add_argument("--file", required=True); c.add_argument("--project", required=True)
     c.add_argument("--title"); c.add_argument("--session-id", default="")
+    v = sub.add_parser("validate", help="run live synthetic smoke/soak checks in new state outside Git")
+    v.add_argument("--output", required=True, help="new directory outside Git for state, credentials, and reports")
+    v.add_argument("--duration", type=float, default=0, help="observation seconds; 0 runs smoke checks and restart")
+    v.add_argument("--timeout", type=float, default=2400, help="maximum seconds for an indexing/visibility check")
     args = p.parse_args(argv)
     config = config or load_config()
     runner = runner or subprocess.call
 
+    if args.cmd == "validate":
+        from mainframe.adapters.validation import ValidationRun
+        try:
+            ValidationRun(args.output, config, args.duration, args.timeout).run()
+        except Exception as e:
+            print(f"mainframe: validation failed ({e})", file=sys.stderr)
+            return 1
+        return 0
     if args.cmd == "serve":
         from mainframe.service.daemon import serve
         serve(config)
