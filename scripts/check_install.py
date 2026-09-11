@@ -26,6 +26,9 @@ for name in expected:
         raise RuntimeError(f"{name} was imported outside the installed environment")
 
 distribution = metadata.distribution("mainframe-mcp")
+for name in ("mainframe", "mainframe_mcp"):
+    if importlib.import_module(name).__version__ != distribution.version:
+        raise RuntimeError(f"{name} runtime version differs from installed metadata")
 entrypoints = {e.name: e for e in distribution.entry_points if e.group == "console_scripts"}
 for name in ("mainframe", "mainframe-mcp"):
     if not callable(entrypoints[name].load()):

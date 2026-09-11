@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mainframe-mcp"
-version = "1.0.0"
+dynamic = ["version"]
 description = "GPU-accelerated semantic knowledge base MCP server for Claude Code and other MCP agents. Local embedding, reranking, contradiction detection, and consolidation on a single GPU."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -58,3 +58,6 @@ markers = ["slow: real filesystem watchers and timing (deselect with -m 'not slo
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "mainframe_mcp.__version__"}

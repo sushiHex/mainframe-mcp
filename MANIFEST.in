@@ -1,0 +1,7 @@
+include AGENTS.md CLAUDE.md CONTRIBUTING.md config.example.json
+include docs/architecture.svg docs/MAINFRAME_QUERY.md docs/PUBLIC_AUDIT.md docs/V2.md docs/PREVIEW_RELEASE.md
+include eval/README.md eval/program.md eval/results.template.md eval/test_queries.example.json
+recursive-include configs *.json
+recursive-include scripts *.py
+recursive-include eval *.py
+recursive-include tests *.py
