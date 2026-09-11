@@ -4,6 +4,11 @@ A **100% local, GPU-accelerated semantic knowledge base** for [Claude Code](http
 
 Everything runs on your own GPU. Nothing leaves your machine at query time.
 
+The native Qwen reranker projects only the final token into the vocabulary.
+This reduces temporary allocations while preserving full attention context and
+INT8 batch order; all 120 frozen evaluation queries retained identical
+candidates, results, and scores.
+
 ## Architecture
 
 ![mainframe-mcp architecture](docs/architecture.svg)
