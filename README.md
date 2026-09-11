@@ -103,6 +103,27 @@ rescan counts, and errors. Keep private queries and raw logs outside public Git.
 Synthetic smoke success establishes operation; it does not establish retrieval
 quality or a production latency guarantee.
 
+Run the repeatable live checks with the installed `mainframe` command:
+
+```bash
+mainframe validate --output ~/mainframe-validation/smoke-01
+mainframe validate --output ~/mainframe-validation/soak-01 --duration 1800
+```
+
+Each run requires a **new directory outside Git**. It creates a synthetic corpus,
+separate state, and an authenticated daemon on an unused port. Your model,
+chunking, and search settings apply; indexing scope is replaced with the scratch
+project, and contextual API calls, consolidation, and NLI are disabled. Models
+use the configured cache and may download missing weights.
+
+Checks cover authentication, browser origins, search/citations, watcher changes,
+capture filtering, restart reuse, rescan bounds, clean shutdown, and v1 isolation.
+`--duration` adds an observation window; mandatory checks can extend the total
+runtime. `report.json` records timings, health probes, counts, and failures;
+`config.json` contains a generated token and daemon logs may contain local paths.
+Keep the entire output private and audit any summary before sharing it. See
+[the v2 guide](docs/V2.md#repeatable-live-validation) for report details.
+
 ## v1 MCP tools
 
 | Tool | Purpose |
