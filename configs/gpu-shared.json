@@ -1,0 +1,17 @@
+{
+  "_name": "GPU Shared - small Qwen3 embedding and native reranking",
+  "_notes": "Opt-in profile for scoped trials; measure host and GPU headroom. Retrieval quality is not assumed equivalent to larger models.",
+  "embedder": {
+    "model": "Qwen/Qwen3-Embedding-0.6B",
+    "quantize": true,
+    "batch_size": 8,
+    "max_seq_length": 2048
+  },
+  "reranker": {
+    "model": "Qwen/Qwen3-Reranker-0.6B",
+    "enabled": true
+  },
+  "contextual": {"enabled": false},
+  "consolidator": {"enabled": false},
+  "nli": {"enabled": false}
+}

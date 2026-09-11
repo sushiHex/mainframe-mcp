@@ -21,8 +21,8 @@ v2 excludes captures from search unless sessions are requested. See the
 
 ## Install an audited artifact
 
-Download the wheel and `SHA256SUMS` from the maintainer's preview release when
-available. Verify the wheel hash against that manifest before installation:
+Download the wheel and `SHA256SUMS` from the [preview release](https://github.com/sushiHex/mainframe-mcp/releases/tag/v2.0.0a1).
+Verify the wheel hash against that manifest before installation:
 
 ```powershell
 Get-FileHash ./mainframe_mcp-2.0.0a1-py3-none-any.whl -Algorithm SHA256
@@ -66,6 +66,11 @@ before loading them and check [Windows startup memory](V2.md#startup-memory-diag
 5. Register the v2 HTTP MCP endpoint or stdio shim only after those checks pass.
    Index-setting drift blocks writes; stop the daemon before `mainframe rebuild`.
    `mainframe reload` releases models and resets backoff; restart to read config edits.
+
+For a smaller allocation, use the [shared-GPU profile and scoped trial](V2.md#scoped-project-trial).
+Exercise real questions and capture recall through separate MCP sessions before
+expanding scope. Continue observing ordinary work over time; synthetic checks
+and a bounded trial do not establish retrieval quality or long-term stability.
 
 ## Roll back
 
