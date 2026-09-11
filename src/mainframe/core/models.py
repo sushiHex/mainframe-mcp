@@ -10,7 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-from mainframe.core.device import empty_cuda_cache, is_device_failure
+from mainframe.core.device import empty_cuda_cache, is_device_failure, memory_pressure_guidance
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +23,13 @@ class _ModelState:
     state: str = "absent"
     error: str | None = None
     retry_at: float | None = None
+    guidance: str | None = None
 
     def retry_in(self, now: float) -> float:
         return max(0.0, self.retry_at - now) if self.retry_at is not None else 0.0
 
     def as_dict(self, now: float) -> dict:
-        return {"name": self.name, "state": self.state, "error": self.error,
+        return {"name": self.name, "state": self.state, "error": self.error, "guidance": self.guidance,
                 "retry_after_s": int(self.retry_in(now))}
 
 
@@ -56,10 +57,10 @@ class Models:
         self._state = {r: _ModelState(config.get(r, {}).get("model", "")) for r in ROLES}
         self.retry_seconds = float(config.get("models", {}).get("retry_minutes", 15)) * 60
 
-    def _set_state(self, role: str, state: str, *, error=None, retry_at=None):
+    def _set_state(self, role: str, state: str, *, error=None, retry_at=None, guidance=None):
         # Publish one complete snapshot. Readers never combine fields from
         # different transitions, and the retry deadline is stored only here.
-        self._state[role] = _ModelState(self._state[role].name, state, error, retry_at)
+        self._state[role] = _ModelState(self._state[role].name, state, error, retry_at, guidance)
 
     def _emit(self, kind: str, **detail):
         if self.events is not None:
@@ -81,9 +82,13 @@ class Models:
         try:
             obj = self._factories[role](self.config)
         except Exception as e:
-            self._set_state(role, "failed", error=str(e), retry_at=self.clock() + self.retry_seconds)
-            self._emit("model.failed", role=role, error=str(e))
+            guidance = memory_pressure_guidance(e)
+            self._set_state(role, "failed", error=str(e), retry_at=self.clock() + self.retry_seconds,
+                            guidance=guidance)
+            self._emit("model.failed", role=role, error=str(e), guidance=guidance)
             logger.warning("%s failed to load: %s", role, str(e))
+            if guidance:
+                logger.warning("%s", guidance)
             raise
         self._objects[role] = obj
         self._set_state(role, "loaded")

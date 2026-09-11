@@ -13,6 +13,7 @@ loaded a model must not initialize CUDA to ask a question about it.
 """
 
 import logging
+import re
 import sys
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,17 @@ def _causes(exc: BaseException):
         exc = exc.__cause__
 
 
+def memory_pressure_guidance(exc: BaseException) -> str | None:
+    """Recognize Windows commit exhaustion, including native-library wrappers."""
+    for cause in _causes(exc):
+        if (getattr(cause, "winerror", None) == 1455
+                or re.search(r"\b(?:winerror|os error)\s*1455\b", str(cause), re.IGNORECASE)):
+            return ("Windows system commit capacity is exhausted (error 1455). "
+                    "Check Memory > Committed in Task Manager; close memory-heavy processes "
+                    "or increase page file capacity before retrying. Free VRAM does not measure this limit.")
+    return None
+
+
 def is_device_failure(exc: BaseException) -> bool:
     """Did the GPU (or its context) go bad, as opposed to this operation being
     wrong?
@@ -61,7 +73,7 @@ def is_device_failure(exc: BaseException) -> bool:
     dead context: reloading the same model cannot make room, and both the
     embedder and the reranker already degrade to one item at a time on it."""
     texts = [str(e).lower() for e in _causes(exc)]
-    if any("out of memory" in t for t in texts):
+    if any("out of memory" in t for t in texts) or memory_pressure_guidance(exc):
         return False
     torch = sys.modules.get("torch")
     device_error = getattr(torch, "AcceleratorError", None) if torch is not None else None

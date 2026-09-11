@@ -8,6 +8,25 @@ from mainframe.service.events import EventStore
 from v2.fakes import fake_models
 
 
+def test_windows_commit_failure_has_guidance_without_becoming_a_device_retry(cfg, tmp_path):
+    calls = []
+    events = EventStore(tmp_path / "events.db")
+
+    def load(config):
+        calls.append(True)
+        raise OSError("synthetic allocation failure (os error 1455)")
+
+    models = Models(cfg, embedder_factory=load, events=events, clock=lambda: 0)
+    with pytest.raises(OSError, match="1455"):
+        models.invoke("embedder", lambda model: None)
+    state = models.state()["embedder"]
+    assert "system commit" in state["guidance"]
+    assert "page file" in state["guidance"]
+    assert state["retry_after_s"] == 900
+    assert len(calls) == 1
+    assert events.recent(1, kind="model.failed")[0]["detail"]["guidance"] == state["guidance"]
+
+
 def _ident(role, m):
     """Inspect identity in tests only; production operations return results."""
     return m.invoke(role, lambda obj: obj)

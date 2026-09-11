@@ -98,6 +98,12 @@ clients. If you use `vram-mcp`, reserve capacity for Mainframe's non-Ollama
 models, renew the reservation while running, and release it after shutdown.
 Reservations are cooperative and cannot prevent unrelated GPU allocations.
 
+On Windows, error 1455 means system commit capacity is exhausted. Check
+**Task Manager > Memory > Committed** and page file capacity as well as VRAM.
+v2 reports this guidance in failed model status and logs; a failed primary
+embedding load releases partial allocations before trying the INT8 fallback.
+See [startup memory diagnostics](docs/V2.md#startup-memory-diagnostics).
+
 Run the [retrieval gate](eval/README.md) against the same indexed corpus,
 queries, and model settings as your baseline. Then exercise repeated searches
 and file changes during a scoped soak, recording health latency, queue depth,

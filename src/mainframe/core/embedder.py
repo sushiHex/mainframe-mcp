@@ -4,10 +4,13 @@ Loads INT8 quantized by default (~7.6GB VRAM for Qwen3-8B).
 Swap models by changing config.json or MAINFRAME_EMBEDDER_MODEL env var.
 """
 
+import gc
 import logging
 from pathlib import Path
 
 import torch
+
+from mainframe.core.device import empty_cuda_cache, memory_pressure_guidance
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +82,15 @@ class Embedder:
             return
         except Exception as e:
             logger.warning(f"sentence-transformers quantized load failed: {e}")
+            guidance = memory_pressure_guidance(e)
+            if guidance:
+                logger.warning("%s", guidance)
 
+        # Leave the handler first: its traceback may own a partial model.
+        # Release both assigned models and constructor cycles before fallback.
+        self.model = None
+        gc.collect()
+        empty_cuda_cache()
         self._load_manual_quantized(model_name, cache_dir, quantization_config)
 
     def _load_manual_quantized(self, model_name, cache_dir, quantization_config):
