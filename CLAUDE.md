@@ -52,6 +52,9 @@ model caches outside public Git.
 - `Models.invoke` owns loading, use, and release. Callers return results and
   must not retain model references. Recognized device faults get one reload
   and retry; failed loads back off.
+- Release partial primary-load allocations before the INT8 fallback. Windows
+  error 1455 is host commit exhaustion; preserve its diagnostics and backoff,
+  and never classify it as a CUDA-context fault that needs a model reload.
 - Health readers use metadata without importing or loading models. Keep
   blocking work off the HTTP event loop.
 - Watcher callbacks filter paths cheaply and record invalidations. Lane
