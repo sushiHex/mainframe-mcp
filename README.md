@@ -82,6 +82,8 @@ reported explicitly; rebuilding requires stopping the daemon first.
 v2 includes model recovery, immutable captures, and verified source citations.
 Its memory workflow currently supports capture, indexing, and search. v1 remains
 the default and retains consolidation, contradiction detection, and RAPTOR.
+Both configuration loaders accept shared files containing v2 project-filter
+lists; v1 preserves those lists without treating them as filesystem paths.
 See [the v2 guide](docs/V2.md) for setup, commands, architecture, and recovery.
 
 ### Validate a v2 deployment
@@ -163,6 +165,22 @@ python -m pytest tests/           # GPU-free suite (fakes + real LanceDB) — no
 python -u eval/evaluate_v1.py --live # v1: evaluate your existing index
 python -u eval/evaluate.py --daemon # v2: evaluate through the running daemon
 ```
+
+CI runs the GPU-free suite on Linux/Python 3.11 and checks clean wheel installs
+on Windows and Linux with Python 3.10 and 3.14. Installation checks use CPU-only
+PyTorch, import every shipped runtime module outside the checkout, load both
+versions' configuration, and verify CLI entry points without downloading models.
+The stable `package-install` check requires every matrix job to pass.
+
+To repeat the installation check locally (downloads dependencies):
+
+```bash
+python -m pip wheel . --no-deps --wheel-dir dist
+python scripts/check_install.py --wheel-dir dist
+```
+
+Use a directory containing exactly one wheel. The checker creates and removes
+its own temporary virtual environment; source-checkout imports cannot satisfy it.
 
 The eval measures against your local corpus and GPU — **it cannot validate a PR by itself** (see the ground rules in [`eval/results.template.md`](eval/results.template.md)); retrieval-affecting changes get re-measured on the maintainer's corpus before merge.
 

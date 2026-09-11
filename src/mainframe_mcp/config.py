@@ -208,7 +208,8 @@ def load_config(config_path: Path | None = None) -> dict:
     # Expand portable "~/..." paths (config.example.json ships these so the
     # example never hardcodes a username).
     for k, v in config.get("paths", {}).items():
-        config["paths"][k] = str(Path(v).expanduser())
+        if isinstance(v, str):  # Shared v2 configs also carry project-filter lists.
+            config["paths"][k] = str(Path(v).expanduser())
 
     return config
 

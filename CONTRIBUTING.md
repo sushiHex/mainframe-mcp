@@ -34,6 +34,12 @@ way: new tests must not load models, hit the network, or assume CUDA. CI runs
 exactly `python -m pytest tests/` on a CPU-only Linux runner — if it doesn't
 pass there, it doesn't merge.
 
+The `package-install` gate also requires clean wheel installations on Windows
+and Linux with Python 3.10 and 3.14. `scripts/check_install.py` imports the runtime
+and checks configuration and entry points outside the checkout, without pytest's
+source-path injection. Keep that check GPU-free and preserve its stable gate name
+when adjusting the matrix.
+
 Use temporary directories for indexes and captures. The v2 suite also drives
 real filesystem watchers; its `slow` tests run by default. During iteration,
 `python -m pytest tests/v2/ -m "not slow"` skips those timing checks. See
