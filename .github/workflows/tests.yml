@@ -25,6 +25,37 @@ jobs:
       - name: Run suite
         run: python -m pytest tests/ -q
 
+  wheel-install:
+    name: wheel (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Build wheel
+        run: python -m pip wheel . --no-deps --wheel-dir dist
+      - name: Check clean CPU-only installation outside the checkout
+        run: python scripts/check_install.py --wheel-dir dist
+
+  # One stable required check covers the matrix even when its axes change.
+  package-install:
+    needs: wheel-install
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every installation check to pass
+        env:
+          RESULT: ${{ needs.wheel-install.result }}
+        run: test "$RESULT" = success
+
   # Repeat the required pre-push audit after publication. Tests are included.
   public-audit:
     runs-on: ubuntu-latest
