@@ -111,6 +111,12 @@ v2 reports this guidance in failed model status and logs; a failed primary
 embedding load releases partial allocations before trying the INT8 fallback.
 See [startup memory diagnostics](docs/V2.md#startup-memory-diagnostics).
 
+For a shared GPU, [gpu-shared.json](configs/gpu-shared.json) selects the 0.6B
+Qwen3 embedder and native reranker. Copy it to a private configuration, add an
+explicit project scope and separate state, and follow the [scoped trial guide](docs/V2.md#scoped-project-trial).
+It disables consolidation, NLI, and contextual calls. Smaller models need their
+own index and retrieval evaluation; this profile makes no quality-equivalence claim.
+
 Run the [retrieval gate](eval/README.md) against the same indexed corpus,
 queries, and model settings as your baseline. Then exercise repeated searches
 and file changes during a scoped soak, recording health latency, queue depth,
@@ -133,6 +139,8 @@ use the configured cache and may download missing weights.
 
 Checks cover authentication, browser origins, search/citations, watcher changes,
 capture filtering, restart reuse, rescan bounds, clean shutdown, and v1 isolation.
+The runner identifies its daemon with a fresh launch nonce, including in Windows
+virtual environments where the Python launcher and interpreter have different PIDs.
 `--duration` adds an observation window; mandatory checks can extend the total
 runtime. `report.json` records timings, health probes, counts, and failures;
 `config.json` contains a generated token and daemon logs may contain local paths.

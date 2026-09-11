@@ -57,16 +57,20 @@ def daemon_session(config, log_path, timeout):
     env.update(MAINFRAME_CONFIG=str(log_path.parent / "config.json"), PYTHONUNBUFFERED="1",
                PYTHONIOENCODING="utf-8")
     client = None
+    owned = False
     failed = False
+    nonce = secrets.token_hex(16)
     with log_path.open("w", encoding="utf-8") as log:
-        process = subprocess.Popen([sys.executable, "-u", "-m", "mainframe.adapters.cli", "serve"],
+        process = subprocess.Popen([sys.executable, "-u", "-m", "mainframe.adapters.validation", nonce],
                                    cwd=log_path.parent, env=env, stdout=log, stderr=subprocess.STDOUT,
                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         try:
             def ready():
-                nonlocal client
+                nonlocal client, owned
                 info = read_discovery(config)
-                if not info or info["pid"] != process.pid:
+                # Windows venv launchers can run Python in a second process.
+                # Only this launch knows the nonce; Popen.pid need not match.
+                if not info or info.get("nonce") != nonce:
                     return False
                 if client is None:
                     client = httpx.Client(base_url=f"http://127.0.0.1:{info['port']}",
@@ -74,7 +78,8 @@ def daemon_session(config, log_path, timeout):
                                           timeout=min(timeout, 600), trust_env=False)
                 try:
                     response = client.get("/healthz", timeout=3)
-                    return response.status_code == 200 and response.json()["nonce"] == info["nonce"]
+                    owned = response.status_code == 200 and response.json().get("nonce") == nonce
+                    return owned
                 except (httpx.HTTPError, ValueError):
                     return False
 
@@ -86,7 +91,7 @@ def daemon_session(config, log_path, timeout):
         finally:
             try:
                 if process.poll() is None:
-                    require(client is not None, "daemon did not publish its discovery record")
+                    require(owned, "daemon did not prove ownership of its endpoint")
                     response = client.post("/shutdown", timeout=10)
                     response.raise_for_status()
                     require(response.json()["stopping"], "daemon did not accept shutdown")
@@ -322,3 +327,12 @@ class ValidationRun:
             self.report["finished_at"] = time.time()
             self.save()
         return self.report
+
+
+if __name__ == "__main__":
+    from mainframe.config import load_config
+    from mainframe.service.daemon import Daemon
+
+    daemon = Daemon(load_config())
+    daemon.nonce = sys.argv[1]
+    daemon.serve()

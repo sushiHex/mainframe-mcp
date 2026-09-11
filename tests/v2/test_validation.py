@@ -116,6 +116,53 @@ def test_nonfinite_or_negative_duration_is_rejected(tmp_path, cfg):
             ValidationRun(tmp_path / "output", cfg, duration=value)
 
 
+@pytest.mark.parametrize("foreign", [None, "discovery", "health"])
+def test_daemon_session_identifies_launch_independently_of_launcher_pid(tmp_path, cfg, monkeypatch, foreign):
+    from unittest.mock import Mock
+    import httpx
+    from mainframe.adapters import validation
+
+    cfg["service"]["token"] = "synthetic-validation-token"
+    state = Path(cfg["paths"]["mainframe_dir"])
+    discovery = state / "daemon.json"
+    process = Mock(pid=100, returncode=None)
+    process.poll.side_effect = lambda: process.returncode
+    client = Mock()
+    client.post.return_value = httpx.Response(200, json={"stopping": True},
+                                             request=httpx.Request("POST", "http://localhost/shutdown"))
+
+    def finish(*args, **kwargs):
+        process.returncode = 0
+        if not foreign:
+            discovery.unlink(missing_ok=True)
+
+    process.wait.side_effect = finish
+    process.terminate.side_effect = finish
+
+    def launch(command, **kwargs):
+        # A Windows venv launcher can publish its child's PID, not Popen.pid.
+        nonce = "unrelated-instance" if foreign == "discovery" else command[-1]
+        discovery.write_text(json.dumps({"pid": 200, "port": 8420, "nonce": nonce}))
+        health_nonce = "unrelated-instance" if foreign == "health" else nonce
+        client.get.return_value = httpx.Response(200, json={"ok": True, "nonce": health_nonce})
+        return process
+
+    monkeypatch.setattr(validation.subprocess, "Popen", launch)
+    monkeypatch.setattr(validation.httpx, "Client", lambda **kwargs: client)
+    if foreign:
+        with pytest.raises(TimeoutError):
+            with validation.daemon_session(cfg, tmp_path / "trial.log", 0.01):
+                pytest.fail("attached to an unrelated daemon")
+        client.post.assert_not_called()
+        assert discovery.exists()
+    else:
+        with validation.daemon_session(cfg, tmp_path / "trial.log", 0.5) as connected:
+            assert connected is client
+        client.post.assert_called_once_with("/shutdown", timeout=10)
+        process.terminate.assert_not_called()
+        assert not discovery.exists()
+
+
 def test_query_crossing_deadline_does_not_start_another_mutation(tmp_path, cfg, monkeypatch):
     from mainframe.adapters import validation
     run = runner(tmp_path, cfg)
