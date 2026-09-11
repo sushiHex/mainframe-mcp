@@ -76,8 +76,12 @@ def check(wheel_dir):
             if result.returncode != expected:
                 raise RuntimeError(f"installed-package check exited {result.returncode}; expected {expected}")
 
-        run(python, "-m", "pip", "install", "torch", "--index-url", "https://download.pytorch.org/whl/cpu")
-        run(python, "-m", "pip", "install", wheels[0])
+        # Older Python releases seed an old pip that rejects normalized package
+        # names in current index metadata. Upgrade only this disposable venv.
+        run(python, "-m", "pip", "install", "--upgrade", "pip>=25.3")
+        run(python, "-m", "pip", "install", "--no-compile", "torch",
+            "--index-url", "https://download.pytorch.org/whl/cpu")
+        run(python, "-m", "pip", "install", "--no-compile", wheels[0])
         (root / "modules.json").write_text(json.dumps(modules), encoding="utf-8")
         (root / "settings.json").write_text(json.dumps({
             "paths": {"mainframe_dir": str(root / "state"), "repos_dir": str(root / "repos"),

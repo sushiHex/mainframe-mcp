@@ -82,6 +82,8 @@ reported explicitly; rebuilding requires stopping the daemon first.
 v2 includes model recovery, immutable captures, and verified source citations.
 Its memory workflow currently supports capture, indexing, and search. v1 remains
 the default and retains consolidation, contradiction detection, and RAPTOR.
+Both configuration loaders accept shared files containing v2 project-filter
+lists; v1 preserves those lists without treating them as filesystem paths.
 See [the v2 guide](docs/V2.md) for setup, commands, architecture, and recovery.
 
 ### Validate a v2 deployment
