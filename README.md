@@ -29,6 +29,13 @@ Everything runs on your own GPU. Nothing leaves your machine at query time.
 
 ## Install
 
+The **2.0.0a1 preview** includes the v1 server and opt-in v2 daemon in one
+distribution. See [preview installation and rollback](docs/PREVIEW_RELEASE.md)
+for isolated environments, audited artifacts, migration, and capability limits.
+The preview version does not switch existing MCP registrations to v2.
+Source distributions include configuration examples, guides, and the complete
+GPU-free test harness; wheels contain the runtime packages.
+
 ```bash
 pip install -e .            # core: lancedb, sentence-transformers, transformers, mcp, tantivy
 pip install -e .[test]      # + pytest for the GPU-free suite
@@ -176,7 +183,9 @@ CI runs the GPU-free suite on Linux/Python 3.11 and checks clean wheel installs
 on Windows and Linux with Python 3.10 and 3.14. Installation checks use CPU-only
 PyTorch, import every shipped runtime module outside the checkout, load both
 versions' configuration, and verify CLI entry points without downloading models.
-The stable `package-install` check requires every matrix job to pass.
+Each matrix job builds a source distribution, builds its wheel, and verifies
+that installed runtime versions match package metadata. The stable
+`package-install` check requires every matrix job to pass.
 
 To repeat the installation check locally (downloads dependencies):
 

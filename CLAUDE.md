@@ -74,6 +74,11 @@ model caches outside public Git.
 
 ## Validation and publication
 
+The preview distribution is `2.0.0a1`; `mainframe_mcp.__version__` supplies both
+runtime namespaces and build metadata. Keep them consistent. Follow
+`docs/PREVIEW_RELEASE.md` for release artifacts, migration, and rollback;
+release preparation produces an audited draft prerelease, not a default switch.
+
 Tests use deterministic fake models and temporary LanceDB stores; they must
 not download models or require CUDA. Real watcher timing tests use `slow` and
 run by default; exclude them only during iteration with `-m "not slow"`.
