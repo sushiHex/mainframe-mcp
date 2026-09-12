@@ -42,6 +42,11 @@ default = v2.load_config(root / "missing.json")
 if default["embedder"]["model"] != "microsoft/harrier-oss-v1-0.6b" or default["embedder"]["encoding"] != "native":
     raise RuntimeError("installed default does not select native Harrier")
 for module in (v1, v2):
+    reranker = module.load_config(root / "missing.json")["reranker"]
+    if (reranker["model"] != "Qwen/Qwen3-Reranker-0.6B"
+            or reranker["revision"] != "e61197ed45024b0ed8a2d74b80b4d909f1255473"
+            or reranker["quantize"]):
+        raise RuntimeError("installed default does not select the pinned BF16 compact reranker")
     config = module.load_config(root / "settings.json")
     if Path(config["paths"]["mainframe_dir"]).resolve() != root / "state":
         raise RuntimeError("installed configuration did not honor its state directory")

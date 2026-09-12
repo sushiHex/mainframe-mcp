@@ -9,6 +9,7 @@ from mainframe_mcp.reranker import (
     detect_backend,
     qwen3_pair_text,
 )
+from mainframe_mcp.qwen import qwen3_pair_text as shared_qwen3_pair_text
 
 
 def test_backend_detection():
@@ -26,7 +27,8 @@ def test_qwen3_pair_text_format():
     out = qwen3_pair_text("grid overflow fix", "The batch cap prevents it.", "Find the doc")
     assert out == ("<Instruct>: Find the doc\n"
                    "<Query>: grid overflow fix\n"
-                   "<Doc>: The batch cap prevents it.")
+                   "<Document>: The batch cap prevents it.")
+    assert qwen3_pair_text is shared_qwen3_pair_text
 
 
 def test_qwen3_pair_text_leaves_document_for_token_budget():
@@ -106,3 +108,30 @@ def test_score_qwen3_retries_per_item_on_oom():
     assert len(scores) == 3 and all(s > 0.5 for s in scores)
     assert calls[0] == 3 and all(c == 1 for c in calls[1:]), \
         f"full batch then per-item retries, got {calls}"
+
+
+def test_qwen_defaults_to_bf16_and_reports_score_contract(monkeypatch):
+    import importlib
+    import torch
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    config = {
+        "reranker": {"model": "Qwen/Qwen3-Reranker-0.6B", "enabled": True},
+        "search": {"rerank_top_k": 3},
+    }
+
+    for module_name in ("mainframe_mcp.reranker", "mainframe.core.reranker"):
+        module = importlib.import_module(module_name)
+        monkeypatch.setattr(
+            module.Reranker,
+            "_load_qwen3",
+            lambda self, device: setattr(self, "_precision", "bf16"),
+        )
+        reranker = module.Reranker(config)
+
+        assert reranker.quantize is False
+        assert reranker.instruction == (
+            "Given a technical documentation search query, retrieve the passage that best answers it"
+        )
+        assert reranker.info["score_type"] == "conditional-yes-probability"
+        assert reranker.info["context_length"] == 2048

@@ -839,9 +839,7 @@ class MainframeMCP:
         }
 
     def status(self) -> dict:
-        """Return Mainframe health status: models (incl. WHICH reranker backend
-        is actually loaded — they span 0.33-0.42 quality and 2-8s/query), index
-        compaction health, VRAM, and the memory-loop backlog."""
+        """Return loaded model contracts, index health, VRAM, and memory-loop backlog."""
         vram = None
         try:
             import torch
@@ -911,9 +909,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search",
             description=(
-                "Search the Mainframe knowledge base (hybrid vector+keyword, then cross-encoder "
-                "reranked). Results are sorted best-first by rerank_score (0-1, HIGHER = more "
-                "relevant — the field to trust: >0.85 strong, <0.3 likely noise). `score` is the "
+                "Search the Mainframe knowledge base (hybrid vector+keyword, then "
+                "reranked). Results are sorted best-first by rerank_score (a model-native, relative "
+                "relevance score: higher ranks first, with no fixed confidence threshold). `score` is the "
                 "raw vector distance (lower = closer; secondary signal only). Each result carries "
                 "file/heading/char_start/char_end for citation and truncated=true when the 500-char "
                 "text preview was clipped. Session captures are excluded by default; set "
@@ -1066,20 +1064,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         )
         # STRUCTURED response — valid JSON for every MCP client (no prose
         # appended to the JSON body). Dead-ends still steer the agent, but via a
-        # `guidance` field: the rephrase technique is otherwise tribal knowledge,
-        # and a weak top rerank_score is indistinguishable from a real hit.
+        # `guidance` field: the rephrase technique is otherwise tribal knowledge.
+        # Non-empty reranker scores are model-native ordering signals, not a
+        # shared probability scale, so their absolute values imply no confidence.
         if not results:
             confidence, guidance = "none", (
                 "No matches. Rephrase with SPECIFIC technical terms (function/class/"
                 "proper names, exact config keys, error strings) — natural-language "
                 "questions rank poorly. Or set include_sessions=true to also search "
                 "raw session captures.")
-        elif max(r["rerank_score"] for r in results) < 0.3:
-            confidence, guidance = "low", (
-                "Best rerank_score < 0.3 (likely noise). Rephrase with more specific "
-                "technical terms. Trust rerank_score (higher = better), not score.")
         else:
-            confidence, guidance = "high", None
+            confidence, guidance = "unavailable", None
         payload = {"results": results, "confidence": confidence}
         if guidance:
             payload["guidance"] = guidance
@@ -1161,10 +1156,9 @@ def main():
     hf_offline_if_cached(load_config())
 
     # Pre-warm (OPT-IN via MAINFRAME_PREWARM): load models NOW in a daemon
-    # thread so the ~2min embedder+4B load overlaps the MCP handshake instead of
-    # taxing the FIRST tool call. Default is LAZY — an always-on gateway sharing a
-    # GPU with other agents must not claim ~13GB of VRAM merely because a client
-    # connected; models load on the first tool call instead. Claude-Code users who
+    # thread so model loading overlaps the MCP handshake instead of taxing
+    # the first tool call. Lazy loading keeps a client connection from claiming
+    # model memory on a shared GPU. Claude-Code users who
     # want an instant first-tool response set MAINFRAME_PREWARM=1.
     if _prewarm_enabled():
         threading.Thread(target=get_mainframe, name="prewarm", daemon=True).start()

@@ -6,7 +6,7 @@ import json
 import pytest
 
 
-REVISION = "22e683669bc0f0bd69640a1354a6d0aebcfeede5"
+REVISION = "e61197ed45024b0ed8a2d74b80b4d909f1255473"
 
 
 @pytest.mark.parametrize("module_name", ("mainframe.config", "mainframe_mcp.config"))

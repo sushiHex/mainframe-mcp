@@ -194,16 +194,24 @@ def test_search_response_is_valid_json(mainframe, monkeypatch):
     assert "guidance" in payload and "technical terms" in payload["guidance"].lower()
 
 
-def test_search_response_hit_has_no_guidance(mainframe, monkeypatch):
+@pytest.mark.parametrize("score", [-2.5, 1.5])
+def test_search_response_raw_score_has_no_confidence_threshold(mainframe, monkeypatch, score):
     mf = mainframe
     monkeypatch.setattr(server_mod, "mainframe", mf)
+    monkeypatch.setattr(
+        mf.reranker,
+        "rerank",
+        lambda query, documents, top_k=None, headings=None, category=None: [(0, score)],
+    )
     d = Path(mf.config["paths"]["repos_dir"]) / "proj" / "docs"
     d.mkdir(parents=True, exist_ok=True)
     (d / "h.md").write_text("# H\n\ntantivy hybrid reranker qwen chunk fact.\n", encoding="utf-8")
     mf.ingest_file(str(d / "h.md"))
     payload = json.loads(_dispatch("search", {"query": "tantivy hybrid reranker qwen chunk"}))
     assert payload["results"]
-    assert payload["confidence"] in ("high", "low")
+    assert payload["results"][0]["rerank_score"] == score
+    assert payload["confidence"] == "unavailable"
+    assert "guidance" not in payload
 
 
 # ---------- item 7: agent context files ----------

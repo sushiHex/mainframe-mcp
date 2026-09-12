@@ -31,7 +31,7 @@ def test_search_status_offline(cfg, store, tmp_path, monkeypatch):
     write_md(Path(cfg["paths"]["repos_dir"]) / "p" / "docs" / "a.md", "# T\n\nqwen3 reranker text.\n")
     assert app.submit("rescan")["upserted_rows"] == 1
     out = app.search("qwen3 reranker")
-    assert out["confidence"] == "high" and out["results"][0]["file"].endswith("a.md")
+    assert out["confidence"] == "unavailable" and out["results"][0]["file"].endswith("a.md")
     st = app.status()
     assert st["index"]["rows"] == 1 and st["index"]["docs"] == 1 and st["index"]["last_run"]["kind"] == "rescan"
     assert st["models"]["embedder"]["state"] == "loaded" and st["vram"] is None and "torch" not in sys.modules

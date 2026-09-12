@@ -64,14 +64,14 @@
   <path class="flow" d="M684 582 H736"/>
   <rect x="744" y="526" width="312" height="112" rx="12" fill="#f7f9f5" stroke="#d7e1d8"/>
   <text x="764" y="556" class="heading">Qwen3 reranking</text>
-  <text x="764" y="584" class="body">Qwen3 Reranker 4B · NF4/BF16</text>
+  <text x="764" y="584" class="body">Qwen3 Reranker 0.6B · BF16</text>
   <text x="764" y="608" class="body">Order passages for this question</text>
   <path class="flow" d="M900 474 V496 H544 V518"/>
   <text x="886" y="491" class="small" text-anchor="end">search this index</text>
   <path class="flow" d="M900 638 V690"/>
   <rect x="40" y="698" width="1040" height="66" rx="12" fill="#e5f1e8" stroke="#cbd9ce"/>
   <text x="64" y="726" class="eyebrow accent">RETURN TO CALLER</text>
-  <text x="64" y="752" class="heading">Relevant passages with verified source citations</text>
+  <text x="64" y="752" class="heading">Top 3 passages with source references</text>
   <text x="1056" y="742" class="body" text-anchor="end">inspect · cite · capture what should persist</text>
   <path class="flow" d="M40 731 H24 V582 H56"/>
   <text x="40" y="790" class="small">Files are the source of truth.</text>

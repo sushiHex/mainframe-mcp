@@ -5,8 +5,9 @@ Harrier has been promoted to the default stack on public main after the
 historical embedding-adoption record; keeping the former Qwen embedder is no
 longer required. All Qwen 4B INT8 reranker references below describe the fixed
 historical control. The later [reranker comparison](RERANKER_COMPARISON.md)
-selects Qwen 4B NF4 as the preferred shared-GPU configuration after its
-production scoring replay and installed synthetic daemon smoke passed.
+selects the pinned Qwen3-Reranker-0.6B BF16 `<Document>` contract from a
+separate source-grounded evaluation. The older control measurements remain
+historical.
 
 Prepared September 11, 2026. **Status at original comparison: Nemotron completed the optimized, paced
 120-query comparison; Harrier and Voyage also completed it with lower memory
@@ -26,8 +27,8 @@ PresentMon tracing request, so visible presentation measurement remains pending;
 the live soak and interaction verdicts are recorded in the measured results.
 Keep model defaults and the live index unchanged during evaluation.
 
-Follow-up: the [shared token-budget fix](RERANKER_CONTEXT.md#measured-follow-up-2026-09-11)
-recovers the hidden passage and gives Harrier all five critical matches, with
+Historical follow-up: the [shared token-budget fix](RERANKER_CONTEXT.md)
+recovered the hidden passage and gave Harrier all five critical matches, with
 first-place ranking tradeoffs. The comparisons above retain their original
 reranker baseline; the challenge is now a known regression set.
 
@@ -47,10 +48,10 @@ smaller allocation peak came with slightly higher reservation and a first-place
 relevance loss that Harrier avoided. Both preserve aggregate public hit rates.
 Published benchmark scores alone cannot establish a winner on this corpus.
 
-The completed embedding comparison used Qwen3 Reranker 4B INT8 throughout.
-Changing the reranker, output dimension, quantization, and embedder together
-would have obscured which change helped. Rerankers were evaluated separately
-after this comparison.
+The completed embedding comparison used Qwen3 Reranker 4B INT8 throughout as
+a historical control. Changing the reranker, output dimension, quantization,
+and embedder together would have obscured which change helped. Rerankers were
+evaluated separately after this comparison.
 
 ## Candidates and footprint evidence
 
@@ -196,7 +197,7 @@ Passing this smoke permits the next stage; it does not establish retrieval quali
    pool 20, context cap 2,048, and three returned chunks.
 2. Run the existing 120-query set against separate embedding indexes. Reuse an
    index only when its complete embedding identity and corpus hashes match.
-   Use optimized Qwen3 Reranker 4B INT8 in every new comparison.
+   Use the pinned Qwen3-Reranker-0.6B BF16 default contract in every new comparison.
 3. Review each candidate before starting the next. Compare candidate recall,
    MRR@3, hit@1/3, and answer-passage hits per query and per dataset. Preserve
    negative results and report paired uncertainty; equal means do not imply parity.

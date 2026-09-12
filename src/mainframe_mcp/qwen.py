@@ -1,6 +1,14 @@
-"""Shared token budgeting for the native Qwen rerankers."""
+"""Shared prompt construction and token budgeting for native Qwen rerankers."""
 
 _WIDEST_VOCAB_SPELLING = "_mainframe_qwen_widest_vocab_spelling"
+_QWEN3_QUERY_CHAR_CLAMP = 1000
+
+
+def qwen3_pair_text(query: str, doc: str, instruction: str) -> str:
+    """Build the measured Qwen3 query/document scoring body."""
+    return (f"<Instruct>: {instruction}\n"
+            f"<Query>: {query[:_QWEN3_QUERY_CHAR_CLAMP]}\n"
+            f"<Document>: {doc}")
 
 
 def _prefix_char_budget(tokenizer, token_budget: int) -> int:

@@ -1,6 +1,6 @@
 """Agent-UX + memory-loop batch (10-POV review Tiers 1-3, 2026-07-01):
 limit actually caps results, candidate pool decoupled from output size,
-truncation flag + char offsets, empty/low-confidence hints at the MCP layer,
+truncation flag + char offsets and empty-result hints at the MCP layer,
 file_path alias, days=0 = all pending sessions, consolidation bloat guardrail."""
 
 import asyncio
@@ -89,6 +89,14 @@ def test_search_empty_result_returns_hint(mainframe, monkeypatch):
     payload = json.loads(out)  # structured JSON, not prose-appended
     assert payload["results"] == [] and payload["confidence"] == "none"
     assert "specific technical terms" in payload["guidance"].lower()
+
+
+def test_search_tool_describes_relative_scores_without_probability_thresholds():
+    search = next(tool for tool in asyncio.run(server_mod.list_tools()) if tool.name == "search")
+    description = search.description.lower()
+    assert "model-native, relative relevance score" in description
+    assert "no fixed confidence threshold" in description
+    assert "0-1" not in description and ">0.85" not in description and "<0.3" not in description
 
 
 def test_ingest_file_accepts_both_param_spellings(mainframe, monkeypatch):
