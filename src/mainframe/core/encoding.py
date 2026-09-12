@@ -36,4 +36,4 @@ def require_native_runtime():
 
     for package, minimum in (('sentence-transformers', '5.4.1'), ('transformers', '5.7.0')):
         if Version(version(package)) < Version(minimum):
-            raise RuntimeError(f'native encoding requires {package}>={minimum}; install mainframe-mcp[native] in a venv')
+            raise RuntimeError(f'native encoding requires {package}>={minimum}; upgrade mainframe-mcp in its environment')

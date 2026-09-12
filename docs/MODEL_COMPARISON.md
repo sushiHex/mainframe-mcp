@@ -2,6 +2,11 @@
 
 Measured on September 10–11, 2026.
 
+Harrier native BF16 with the optimized Qwen3 4B INT8 reranker is now the default
+on public main. Promotion accepts the [context follow-up's](RERANKER_CONTEXT.md)
+recorded first-place tradeoffs. The tables below retain their original baselines
+and experimental status at measurement time.
+
 ## Scope and method
 
 This evaluation is based on the v2 retrieval code at public commit
@@ -483,18 +488,20 @@ PyTorch 2.14.0+cpu, Sentence Transformers 6.0.1, Transformers 5.17.0, and
 packaging 26.3. This checks installation/import compatibility; the GPU results
 above use the separately recorded trial versions.
 
-Keep the Qwen model and INT8 defaults with the final-token optimization.
-Harrier is available through an experimental opt-in v2 preset, with no observed
-aggregate regression on the frozen public, scoped working, and fresh challenge checks. Voyage
-also passes the aggregate public quality check but offers a smaller incremental
-memory saving. The live synthetic daemon soak and normal daemon trial passed;
-the operator reported smooth interaction during the latter. The fresh challenge
-retains one shared critical-passage miss; displayed-frame timing and independent
-user-authored holdout evidence remain incomplete. These limitations leave full
-default-promotion criteria unmet. Neither
-Ettin nor FP16 met the strict no-observed-regression criterion across the
-reported retrieval metrics. Raw records and downloaded weights remain local;
-no existing live index, MCP registration, or machine-wide configuration was changed.
+Harrier native BF16 and the optimized Qwen3 4B INT8 reranker are now the standard
+v2 stack. The token-budget follow-up recovers all five critical answers and all
+20 top-three passage matches on the known challenge. Promotion accepts the
+documented first-place tradeoffs; that reused challenge is no longer a fresh
+holdout. Voyage passes the aggregate public check but offers a smaller
+incremental memory saving. Neither Ettin nor FP16 met the strict
+no-observed-regression criterion across the reported retrieval metrics.
+
+The live synthetic daemon soak and normal daemon trial passed. The operator
+reported smooth interaction during the validation session; displayed-frame
+timing and independent user-authored holdout evidence remain incomplete. These
+limits constrain the claims, rather than requiring retention of the former
+default. Local installation now uses Harrier and its matching index. Raw
+records, downloaded weights, and machine configuration remain outside Git.
 
 ## Model provenance
 

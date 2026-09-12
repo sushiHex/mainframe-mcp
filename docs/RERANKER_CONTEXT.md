@@ -83,8 +83,9 @@ rejected the report format after scoring completed. The helper was corrected;
 an independent check verified all 374 saved records, source identities, labels,
 and metrics without rewriting the original report or claiming that supervisor
 check passed. The runtime regression suite passed **542 tests, with 1 skipped**.
-Raw sources, queries, and reports remain outside Git. Model defaults are unchanged;
-the change is available for review and scoped experimental use.
+Raw sources, queries, and reports remain outside Git. These measurements
+preceded Harrier default promotion; the accepted ranking tradeoffs remain
+recorded here. See the [current default stack](../README.md#default-model-stack).
 
 The installed Harrier wheel also passed an unpaced daemon check across two
 explicitly configured projects: 18 documents, 303 chunks, authenticated searches,

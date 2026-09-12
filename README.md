@@ -1,6 +1,6 @@
 # mainframe-mcp
 
-A **100% local, GPU-accelerated semantic knowledge base** for [Claude Code](https://claude.com/claude-code) and any other [MCP](https://modelcontextprotocol.io/)-compatible agent. It indexes the markdown knowledge scattered across your repos (`research/`, `docs/`, and root context files like `CLAUDE.md` / `AGENTS.md`), and gives coding agents high-precision hybrid search over it — plus an ambient memory pipeline that captures session knowledge and consolidates it into curated notes over time.
+A **100% local, GPU-accelerated semantic knowledge base** for [Claude Code](https://claude.com/claude-code) and any other [MCP](https://modelcontextprotocol.io/)-compatible agent. It indexes Markdown across your repositories (`research/`, `docs/`, and root files like `CLAUDE.md` / `AGENTS.md`), provides hybrid search with source citations, and captures session knowledge for later recall.
 
 Everything runs on your own GPU. Nothing leaves your machine at query time.
 
@@ -8,66 +8,41 @@ Everything runs on your own GPU. Nothing leaves your machine at query time.
 
 ![mainframe-mcp architecture](docs/architecture.svg)
 
-*Three loops on one machine: ingest builds a disposable dual index; a read-only query path retrieves hybrid and reranks with the model's own logits; an ambient-memory loop consolidates immutable session captures into curated notes where newer facts win, then re-indexes them. Files are the source of truth; the vector index is derived and disposable.*
+*Ingest builds a disposable dual index; queries combine vector and keyword retrieval with native reranking. The diagram also shows legacy v1 consolidation, which is separate from the default daemon's capture and recall workflow. Files are the source of truth.*
 
 ## What it does
 
-- **Hybrid retrieval, reranked** — vector nearest-neighbor (Qwen3-Embedding-8B, INT8) + Tantivy full-text search, merged and re-scored by a cross-encoder reranker. Markdown-header-aware 256-token chunking, adaptive per-query-type instruct prefixes, section-heading injection at rerank time.
+- **Hybrid retrieval, reranked** — vector nearest-neighbor (Harrier 0.6B, native BF16) + Tantivy full-text search, merged and re-scored by a cross-encoder reranker. Markdown-header-aware 256-token chunking, model-owned query/document encoding, section-heading injection at rerank time.
 - **Native Qwen3-Reranker backend** — the reranker scores candidates via the model's yes/no logits with a task instruction (the model-card method), not a bolted-on classification head. On our eval this beat bge-reranker-v2-m3 by **+26% composite / +33% hit@1**.
-- **Ambient memory (mem0-inspired)** — agents write immutable session-capture files (secret-scrubbed, gitignored lane); a consolidation pass merges them into curated memory notes where **newer facts supersede stale ones**, with NLI-backed contradiction surfacing and anti-bloat guardrails. Keep private notes in your private knowledge corpus. Files are the source of truth — the vector index is derived and disposable.
+- **Legacy v1 ambient memory (mem0-inspired)** — agents write immutable session-capture files (secret-scrubbed, gitignored lane); a consolidation pass merges them into curated memory notes where **newer facts supersede stale ones**, with NLI-backed contradiction surfacing and anti-bloat guardrails. Keep private notes in your private knowledge corpus. Files are the source of truth — the vector index is derived and disposable.
 - **Ops-hardened** — read-only search hot path, atomic manifest writes with crash recovery, index compaction + FTS refresh after ingest batches, poison-file-resilient syncs, path-traversal validation, and a layered secret-scrub denylist on every write path.
 - **Measured, not vibed** — an eval harness with a regression gate (`eval/evaluate.py --min-score`), an experiment-log discipline (`eval/results.template.md`), and a GPU-free test suite (fakes + real LanceDB) that runs in CI.
 
-The final-token projection experiment preserved the full attention context
-and all 120 measured rankings while
-reducing the full Qwen stack's measured query-phase CUDA peak to **13.70 GiB**.
-Nemotron with that optimized reranker completed the same comparison at
-**8.20 GiB**: Mainframe passage matches stayed unchanged, while SciFact top-three
-recall fell from 90% to 89%. See the [measured comparison](docs/MODEL_COMPARISON.md)
-for scope, timings, and retrieval tradeoffs. Model and precision defaults remain unchanged.
-Harrier completed the same set at **6.97 GiB**, retaining Mainframe passage
-matches and improving SciFact top-three matches to **91/100**. It is the
-selected opt-in candidate: Voyage reached **6.71 GiB** allocation
-with the same aggregate hit rates, but slightly higher reservation and one lost
-first-place match. On a separate working sample, production native Harrier
-retained all 34 baseline top-three expected-passage matches and found three
-more, using **7.80 versus 14.33 GiB** peak CUDA allocation. That check used
-47 existing labels across 64 files; it is not an unseen-query evaluation.
+**The default is the v2 daemon with Harrier 0.6B in BF16 and Qwen3-Reranker-4B
+in INT8.** The reranker projects only the final token and budgets documents
+inside the existing 2,048-token context, reserving the assistant scoring suffix.
+All clients share one model stack. The older Qwen embedding presets now select
+Harrier; no experimental option or extra dependency group is needed.
 
-In the original 20-question, source-grounded challenge frozen before either run,
-both models found the expected document for every query and the labeled passage
-for 19. Harrier lost no baseline passage. Both missed one critical passage at
-reranking; [the results](docs/MODEL_COMPARISON.md#fresh-passage-based-challenge)
-retain that limitation and the test's authorship and scope.
+The original 47-question comparison measured **7.80 versus 14.33 GiB** peak
+CUDA allocation for Harrier versus Qwen 8B. With the context correction,
+Harrier finds all **20/20 top-three passages and 5/5 critical answers** in the
+known challenge. First-place passage matches decreased from 16 to 15; the
+47-question working sample changed from 27 to 26, retaining all 37 top-three
+matches. These measured tradeoffs were accepted for default promotion.
+See [model comparisons](docs/MODEL_COMPARISON.md) and
+[context regression results](docs/RERANKER_CONTEXT.md) for the original scopes.
 
-The [paced evaluation runner](eval/README.md#paced-retrieval-comparison) owns
-worker cleanup and a cooperative `vram-mcp` reservation, observes host/GPU memory,
-and separates active work, deliberate pacing, and monitoring waits. It imposes
-no estimated-memory admission cutoff, allocation cap, or fixed trial deadline.
-Expired cooperative claims are replaced before further work is permitted.
-The [adoption plan](docs/EMBEDDING_TRIAL.md) separates trial support from a
-default-model change. A normal, unpaced daemon trial completed on the 64-file
-copy with **7.03 GiB** peak CUDA allocation; the operator reported smooth
-interaction during searches. Displayed-frame timing remains unmeasured.
-
-Fresh questions can reuse a completed evaluation index when its corpus and
-encoding identity match. The [evaluation guide](eval/README.md) documents
-verification of older indexes through their original manifest.
-
-Native Qwen reranking now budgets documents in tokens, replacing the former
-3,000-character cutoff. Long paragraphs and preserved code blocks can use the
-existing 2,048-token context, with room reserved for the assistant scoring
-suffix. Ordinary prompt tokens, candidate order, and INT8 batches are preserved;
-scores can change in batches containing longer documents. Existing indexes and
-citations remain valid. See [context handling](docs/RERANKER_CONTEXT.md).
-For ordinary Harrier use, start with an explicit project scope and keep a
-[private question journal](docs/V2.md#everyday-harrier-evaluation) that distinguishes
-real user questions from scripted probes and known regression cases.
+An installed, unpaced trial across 18 documents peaked at **6.886 GiB CUDA
+allocation** and passed search, private question recording, and restart reuse.
+The operator reported smooth interaction; displayed-frame timing was not
+measured. Memory use depends on scope and query length. Keep a
+[private question journal](docs/V2.md#everyday-harrier-evaluation) for ordinary work.
 
 ## Requirements
 
 - Python 3.10+ (developed on 3.14). **3.11–3.13 have the broadest binary-wheel coverage**; on very new interpreters some deps (lancedb, pydantic-core) may not have Linux wheels yet — pin to 3.13 there if `pip install` fails building from source.
-- NVIDIA GPU with ~16 GB VRAM for the full stack (developed on an RTX 3090 24 GB); smaller presets in `configs/`
+- NVIDIA GPU with BF16 support and headroom for the measured ~7–8 GiB Harrier search stack (developed on an RTX 3090 24 GB); measure your workload and leave room for the desktop.
 - PyTorch with CUDA — on Windows the default pip wheel is CPU-only:
   ```
   pip install torch --index-url https://download.pytorch.org/whl/cu128
@@ -75,54 +50,54 @@ real user questions from scripted probes and known regression cases.
 
 ## Install
 
-The **2.0.0a1 preview** includes the v1 server and opt-in v2 daemon in one
-distribution. See [preview installation and rollback](docs/PREVIEW_RELEASE.md)
-for isolated environments, audited artifacts, migration, and capability limits.
-The preview version does not switch existing MCP registrations to v2.
-Source distributions include configuration examples, guides, and the complete
-GPU-free test harness; wheels contain the runtime packages.
+Current public `main` uses Harrier and the v2 daemon by default. The original
+`v2.0.0a1` release artifact predates this promotion; install from the current
+checkout or a wheel built from it. Use an environment with CUDA-enabled PyTorch:
 
 ```bash
-pip install -e .            # core: lancedb, sentence-transformers, transformers, mcp, tantivy
-pip install -e .[test]      # + pytest for the GPU-free suite
+python -m pip install -e .
+# For contributors:
+python -m pip install -e ".[test]"
 ```
 
-Configuration is optional — sensible defaults apply with no config file. To customize, copy `config.example.json` to `~/.claude/mainframe/config.json` (or start from a preset in `configs/`); most knobs hot-reload via the `reload_config` tool, model changes need a restart. Model weights download from Hugging Face on first run (~15 GB total for the full stack) and stay resident.
-
-Register with Claude Code (use the interpreter of the environment you installed into — replace `python` with its full path if you use venvs/conda):
+Sentence Transformers 5.4.1+ and Transformers 5.7.0+ are core dependencies.
+Copy `config.example.json` to `~/.claude/mainframe/config.json`, set
+`paths.include_projects`, and run:
 
 ```bash
-claude mcp add mainframe -- python -u -m mainframe_mcp.server
+mainframe serve
+# In another terminal:
+mainframe search "How does native index identity work?" --detailed
+mainframe status
+mainframe down
 ```
 
-### Using with other MCP hosts
+`MAINFRAME_CONFIG` selects another configuration file. Restart after changing
+it. The daemon loads models lazily; `service.prewarm: true` opts into eager
+loading. Model weights download from Hugging Face on first use.
 
-Nothing about the server is Claude-specific — it speaks plain MCP over stdio. Point any host at `python -u -m mainframe_mcp.server` and tune it with environment variables:
+### Connect an MCP host
 
-| Env var | Effect |
-|---------|--------|
-| `MAINFRAME_CONFIG` | Path to the config file (portable override; default `~/.claude/mainframe/config.json`) |
-| `MAINFRAME_PREWARM=1` | Load models at startup instead of lazily on the first tool call. **Off by default** — an always-on gateway sharing a GPU should not claim ~13 GB of VRAM merely because a client connected. Set this for a dedicated, interactive setup that wants instant first-tool response. |
-| `MAINFRAME_READ_ONLY=1` | Expose only `search` / `list_files` / `status` (no delete / consolidate / bulk-index / RAPTOR). Smaller tool schema, no accidental mutation — ideal when injecting Mainframe into ordinary conversations. Run maintenance from a separate, full-access invocation. |
+Use the daemon's Streamable HTTP endpoint `http://127.0.0.1:7433/mcp` or
+`/mcp/ro` for search and status only. For stdio hosts, `mainframe-mcp` forwards
+requests to that daemon without loading another model stack:
 
-Example (a generic gateway config; adjust to your host's schema):
-
-```yaml
-mcp_servers:
-  mainframe:
-    command: "python"
-    args: ["-u", "-m", "mainframe_mcp.server"]
-    env:
-      MAINFRAME_CONFIG: "/path/to/mainframe/config.json"
-      MAINFRAME_READ_ONLY: "1"      # recall-only in everyday chat
-      # MAINFRAME_PREWARM: "1"      # opt in only for a dedicated instance
-    timeout: 180
-    connect_timeout: 60
+```bash
+claude mcp add mainframe -- mainframe-mcp
+# Equivalent module entry point:
+python -u -m mainframe.adapters.mcp_stdio_shim
 ```
 
-## v2 daemon preview
+Start the daemon separately and use the same configuration for every client.
+`mainframe-mcp` now uses this v2 transport. The explicit
+`python -m mainframe_mcp.server` entry point remains the legacy v1 implementation,
+which needs its own legacy model configuration and does not support Harrier's
+native encoding. The [migration guide](docs/PREVIEW_RELEASE.md) describes the
+capability differences and index transition.
 
-The optional `mainframe` command runs one background service for multiple MCP
+## Shared daemon
+
+The `mainframe` command runs one background service for multiple MCP
 clients. It watches files, reconciles missed changes, and exposes HTTP MCP at
 `http://127.0.0.1:7433/mcp`; `/mcp/ro` exposes only search and status. Stdio-only
 clients can use `python -u -m mainframe.adapters.mcp_stdio_shim`.
@@ -133,19 +108,18 @@ its own `index.lancedb`, separate from v1's `.lancedb`. Index-setting drift is
 reported explicitly; rebuilding requires stopping the daemon first.
 
 v2 includes model recovery, immutable captures, and verified source citations.
-Its memory workflow currently supports capture, indexing, and search. v1 remains
-the default and retains consolidation, contradiction detection, and RAPTOR.
+Its memory workflow supports capture, indexing, and search. Legacy v1 retains
+consolidation, contradiction detection, and RAPTOR; those are not daemon features.
 Both configuration loaders accept shared files containing v2 project-filter
 lists; v1 preserves those lists without treating them as filesystem paths.
 See [the v2 guide](docs/V2.md) for setup, commands, architecture, and recovery.
 
-The experimental [Harrier preset](configs/v2-harrier.json) uses the
-[native encoding option](docs/V2.md#native-embedding-contract):
-model-owned query/document routes in BF16, a pinned revision, and a separately
-identified index. Install `.[native]` in an isolated environment; v1 refuses
-native configurations. Use a separate state directory and explicit project
-scope; keep the old configuration and index for rollback. Normal daemon
-inference is unpaced; this preset does not change the default models.
+Harrier uses a pinned revision, model-owned query/document routes, BF16,
+and a recorded index identity. The [Harrier configuration](configs/v2-harrier.json)
+shows these defaults explicitly. Existing Qwen vectors cannot be reused:
+stop the daemon and run `mainframe rebuild` with the new configuration, or
+point it at an already validated Harrier index. Native inference is unpaced.
+See the [encoding contract](docs/V2.md#native-embedding-contract).
 
 ### Validate a v2 deployment
 
@@ -170,11 +144,9 @@ v2 reports this guidance in failed model status and logs; a failed primary
 embedding load releases partial allocations before trying the INT8 fallback.
 See [startup memory diagnostics](docs/V2.md#startup-memory-diagnostics).
 
-For a shared GPU, [gpu-shared.json](configs/gpu-shared.json) selects the 0.6B
-Qwen3 embedder and native reranker. Copy it to a private configuration, add an
-explicit project scope and separate state, and follow the [scoped trial guide](docs/V2.md#scoped-project-trial).
-It disables consolidation, NLI, and contextual calls. Smaller models need their
-own index and retrieval evaluation; this profile makes no quality-equivalence claim.
+The GPU profiles in `configs/` now select the same measured Harrier/Qwen
+reranker stack. `cpu-only` and `gpu-minimal` remain explicit alternative
+profiles with different models and retrieval behavior.
 
 Run the [retrieval gate](eval/README.md) against the same indexed corpus,
 queries, and model settings as your baseline. Then exercise repeated searches
@@ -182,6 +154,8 @@ and file changes during a scoped soak, recording health latency, queue depth,
 rescan counts, and errors. Keep private queries and raw logs outside public Git.
 Synthetic smoke success establishes operation; it does not establish retrieval
 quality or a production latency guarantee.
+Validation reports recorded model-load failures even when a concurrent status
+snapshot still shows the model loading.
 
 Run the repeatable live checks with the installed `mainframe` command:
 
@@ -220,16 +194,17 @@ Keep the entire output private and audit any summary before sharing it. See
 
 Query technique matters: **specific technical terms** (proper nouns, function names, exact config keys) rerank ~0.99; natural-language questions rerank ~0.05. See `docs/MAINFRAME_QUERY.md`.
 
-## Model stack (default `configs/gpu-max.json`)
+## Default model stack
 
-| Role | Model | VRAM |
-|------|-------|------|
-| Embedder | Qwen/Qwen3-Embedding-8B (INT8, 4096-dim) | ~9 GB |
-| Reranker | Qwen/Qwen3-Reranker-4B (INT8, native logit scoring) | ~4.5 GB |
-| Consolidator | Qwen/Qwen2.5-3B-Instruct (4-bit, lazy-loaded) | ~2.1 GB |
-| Contradiction NLI | DeBERTa-v3-large-MNLI (lazy-loaded) | ~0.8 GB |
+| Role | Model | Encoding |
+|------|-------|----------|
+| Embedder | microsoft/harrier-oss-v1-0.6b | Native BF16, 1,024 dimensions; pinned revision |
+| Reranker | Qwen/Qwen3-Reranker-4B | INT8, final-token yes/no projection, 2,048-token budget |
 
-Swap any of them via config or env (`MAINFRAME_RERANKER_MODEL`, etc.). `BAAI/bge-reranker-v2-m3` remains a leaner, faster reranker fallback (~1.2 GB, ~3× lower search latency, lower quality).
+The daemon does not load consolidation or NLI models. The existing legacy v1
+features remain separate. Changes to an embedding model require a matching
+encoding contract and an offline index rebuild; changing only a model name
+does not make an existing index compatible.
 
 ## Privacy stance
 

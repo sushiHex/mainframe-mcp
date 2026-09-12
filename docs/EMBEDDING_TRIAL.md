@@ -1,6 +1,10 @@
 # Small Embedding Trial and Adoption Plan
 
-Prepared September 11, 2026. **Status: Nemotron completed the optimized, paced
+Harrier has been promoted to the default stack on public main after the
+[context correction](RERANKER_CONTEXT.md). The plan and results below are the
+historical adoption record; keeping Qwen as the default is no longer required.
+
+Prepared September 11, 2026. **Status at original comparison: Nemotron completed the optimized, paced
 120-query comparison; Harrier and Voyage also completed it with lower memory
 and no aggregate quality regression against Qwen. Harrier is the selected
 private-trial finalist. Its production native encoder also completed the

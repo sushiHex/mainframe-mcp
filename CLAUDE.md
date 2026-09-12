@@ -7,19 +7,23 @@ repository is the development home. Read `AGENTS.md`, `CONTRIBUTING.md`, and
 
 ## Versions and structure
 
-- `src/mainframe_mcp/`: default v1 stdio server, including consolidation, NLI
+- `src/mainframe_mcp/`: legacy v1 stdio server, including consolidation, NLI
   contradiction checks, and optional RAPTOR summaries.
-- `src/mainframe/`: optional v2 daemon with capture, indexing, search, HTTP MCP,
+- `src/mainframe/`: default v2 daemon with capture, indexing, search, HTTP MCP,
   REST, CLI, and a stdio forwarding adapter. See `docs/V2.md`.
 - v1 owns `.lancedb`; v2 owns `index.lancedb`. Never point either implementation
   at the other's index. v2 builds a new index on first startup.
 - v2 consolidation is not implemented. Its capture/receipt primitives do not
   imply a complete ambient consolidation loop.
-- v2 native encoding is opt-in: BF16, a pinned model revision, and model-owned
-  query/document routes. Start from `configs/v2-harrier.json` in separate state;
-  v1 refuses native configurations. Changed or missing native index identity
-  blocks reads and writes. Rebuild offline instead of editing the fingerprint.
-  See `docs/V2.md#native-embedding-contract`; defaults remain Qwen.
+- Harrier 0.6B native BF16 is the v2 default, paired with the optimized Qwen3
+  4B INT8 reranker. Core dependencies include the measured native library pair.
+  `mainframe-mcp` forwards stdio to the daemon; it does not start another stack.
+- Changed or missing native index identity blocks reads and writes. Rebuild
+  offline instead of editing the fingerprint. Do not silently reuse Qwen vectors
+  or add rollback requirements for retired default models. Legacy v1 remains
+  an explicit implementation and refuses native configurations.
+  See `docs/V2.md#native-embedding-contract`.
+
 
 | Path | Responsibility |
 |---|---|
@@ -38,8 +42,8 @@ python -m pip install -e ".[test]"
 python -m pytest tests/ -q
 python -m pytest tests/v2/test_search.py -q
 python -m pip wheel . --no-deps -w dist
-python -u -m mainframe_mcp.server
 mainframe serve
+mainframe-mcp
 ```
 
 Set `MAINFRAME_CONFIG` explicitly for isolated work. Scope

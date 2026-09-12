@@ -33,9 +33,14 @@ entrypoints = {e.name: e for e in distribution.entry_points if e.group == "conso
 for name in ("mainframe", "mainframe-mcp"):
     if not callable(entrypoints[name].load()):
         raise RuntimeError(f"{name} entry point is not callable")
+if entrypoints["mainframe-mcp"].value != "mainframe.adapters.mcp_stdio_shim:main":
+    raise RuntimeError("default MCP entry point must share the daemon's Harrier stack")
 
 from mainframe import config as v2
 from mainframe_mcp import config as v1
+default = v2.load_config(root / "missing.json")
+if default["embedder"]["model"] != "microsoft/harrier-oss-v1-0.6b" or default["embedder"]["encoding"] != "native":
+    raise RuntimeError("installed default does not select native Harrier")
 for module in (v1, v2):
     config = module.load_config(root / "settings.json")
     if Path(config["paths"]["mainframe_dir"]).resolve() != root / "state":

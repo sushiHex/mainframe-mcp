@@ -58,7 +58,9 @@ bitsandbytes INT8 kernel grid batch seq_length overflow       → 0.99
 bge-reranker heading injection cross-encoder config           → 0.99
 ```
 
-The embedder (Qwen3-8B) excels at matching specific nouns, function names, and technical vocabulary.
+Use specific nouns, function names, and technical vocabulary in queries. This
+guide was measured with the former Qwen3-8B embedder; Harrier is now the default,
+so validate these heuristics against its returned source passages.
 
 ### What works well: mixed technical + natural language
 

@@ -208,7 +208,8 @@ class ValidationRun:
 
     def indexed(self):
         status = self.request("GET", "/status")
-        require(not any(m["state"] == "failed" for m in status["models"].values()),
+        require(not (any(m["state"] == "failed" for m in status["models"].values()) or
+                     any(e["kind"] == "model.failed" for e in status["recent_events"])),
                 "model load failed; see the daemon log and model status")
         require(not any(e["kind"] == "job.failed" for e in status["recent_events"]),
                 "daemon recorded a failed job; see the daemon log")
