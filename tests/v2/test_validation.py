@@ -16,7 +16,9 @@ from v2.fakes import fake_models
 @contextlib.contextmanager
 def local_session(config, log, timeout):
     """Real daemon, watcher, index, and routes; only models and sockets are fake."""
-    app = Mainframe(config, models=fake_models(config))
+    models = fake_models(config)
+    app = Mainframe(config, models=models)
+    models.events = app.events
     daemon = Daemon(config, app=app)
     headers = {"Authorization": "Bearer " + config["service"]["token"]}
     try:

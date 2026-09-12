@@ -60,6 +60,67 @@ def test_load_config_merges_file_and_env(tmp_path, monkeypatch):
     assert c["chunker"]["chunk_size"] == 256                  # default retained
 
 
+def test_v1_embedder_config_without_encoding_keeps_legacy_semantics(tmp_path, monkeypatch):
+    old = tmp_path / "old-config.json"
+    old.write_text(json.dumps({"embedder": {
+        "model": "Qwen/Qwen3-Embedding-8B", "quantize": True,
+        "batch_size": 8, "max_seq_length": 2048,
+        "query_prefix": "Instruct: Find project knowledge\nQuery: ",
+    }}), encoding="utf-8")
+    monkeypatch.delenv("MAINFRAME_PRESET", raising=False)
+    monkeypatch.delenv("MAINFRAME_EMBEDDER_MODEL", raising=False)
+
+    embedder = load_config(old)["embedder"]
+
+    assert embedder["model"] == "Qwen/Qwen3-Embedding-8B"
+    assert embedder["encoding"] == "legacy"
+    assert embedder["revision"] is None and embedder["query_prompt"] is None
+    assert embedder["quantize"] is True
+    assert embedder["query_prefix"].startswith("Instruct:")
+
+
+def test_embedder_model_env_override_replaces_native_contract(tmp_path, monkeypatch):
+    configured = tmp_path / "native.json"
+    configured.write_text(json.dumps({"embedder": {"batch_size": 3}}), encoding="utf-8")
+    monkeypatch.delenv("MAINFRAME_PRESET", raising=False)
+    monkeypatch.setenv("MAINFRAME_EMBEDDER_MODEL", "BAAI/bge-small-en-v1.5")
+
+    embedder = load_config(configured)["embedder"]
+
+    assert embedder["model"] == "BAAI/bge-small-en-v1.5"
+    assert embedder["encoding"] == "legacy"
+    assert embedder["revision"] is None and embedder["query_prompt"] is None
+    assert embedder["batch_size"] == 3
+
+
+def test_changed_native_model_must_supply_its_own_contract(tmp_path, monkeypatch):
+    custom = tmp_path / "custom-native.json"
+    custom.write_text(json.dumps({"embedder": {
+        "model": "example/native-embedder", "encoding": "native", "quantize": False,
+    }}), encoding="utf-8")
+    monkeypatch.delenv("MAINFRAME_PRESET", raising=False)
+    monkeypatch.delenv("MAINFRAME_EMBEDDER_MODEL", raising=False)
+
+    with pytest.raises(ConfigError, match="pinned 40-character embedder.revision"):
+        load_config(custom)
+
+
+def test_changed_native_model_accepts_an_explicit_complete_contract(tmp_path, monkeypatch):
+    custom = tmp_path / "custom-native.json"
+    custom.write_text(json.dumps({"embedder": {
+        "model": "example/native-embedder", "encoding": "native",
+        "revision": "b" * 40, "query_prompt": None, "quantize": False,
+    }}), encoding="utf-8")
+    monkeypatch.delenv("MAINFRAME_PRESET", raising=False)
+    monkeypatch.delenv("MAINFRAME_EMBEDDER_MODEL", raising=False)
+
+    embedder = load_config(custom)["embedder"]
+
+    assert embedder["encoding"] == "native"
+    assert embedder["revision"] == "b" * 40
+    assert embedder["query_prompt"] is None
+
+
 def test_explicit_path_beats_env(tmp_path, monkeypatch):
     a = tmp_path / "a.json"; a.write_text(json.dumps({"service": {"port": 1}}), encoding="utf-8")
     b = tmp_path / "b.json"; b.write_text(json.dumps({"service": {"port": 2}}), encoding="utf-8")
