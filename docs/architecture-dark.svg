@@ -3,73 +3,73 @@
   <desc id="desc">Project Markdown and saved captures are watched, chunked, embedded by Harrier, and stored in a derived local index. Agents, the CLI, and HTTP or stdio clients send questions to the shared daemon. Harrier embeds the query, keyword and semantic search find candidates, and Qwen3 reranks them. The caller receives passages with verified citations. Captures are included in search only when requested, and source files remain authoritative.</desc>
   <!-- Editable vector artwork. The light and dark variants share the same geometry. -->
   <defs>
-    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1 L6 4 L1 7" fill="none" stroke="#86a992" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1 L6 4 L1 7" fill="none" stroke="#72a181" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
     <style>
-      text { font-family: 'Segoe UI', Arial, sans-serif; fill: #20372e; }
-      .eyebrow { font-size: 13px; font-weight: 650; letter-spacing: 1.6px; fill: #596f63; }
+      text { font-family: 'Segoe UI', Arial, sans-serif; fill: #edf4ec; }
+      .eyebrow { font-size: 13px; font-weight: 650; letter-spacing: 1.6px; fill: #b0c4b5; }
       .title { font-size: 30px; font-weight: 650; letter-spacing: -.6px; }
       .heading { font-size: 20px; font-weight: 650; }
-      .body { font-size: 16px; fill: #596f63; }
-      .small { font-size: 14px; fill: #596f63; }
-      .accent { fill: #227252; }
-      .flow { fill: none; stroke: #86a992; stroke-width: 1.7; marker-end: url(#arrow); }
-      .rail { fill: none; stroke: #bfd0c3; stroke-width: 1.4; }
+      .body { font-size: 16px; fill: #b0c4b5; }
+      .small { font-size: 14px; fill: #b0c4b5; }
+      .accent { fill: #96dfad; }
+      .flow { fill: none; stroke: #72a181; stroke-width: 1.7; marker-end: url(#arrow); }
+      .rail { fill: none; stroke: #405c49; stroke-width: 1.4; }
     </style>
   </defs>
-  <rect x=".5" y=".5" width="1119" height="803" rx="20" fill="#f5f7f3" stroke="#d7e1d8"/>
+  <rect x=".5" y=".5" width="1119" height="803" rx="20" fill="#101b17" stroke="#32483b"/>
   <text x="40" y="40" class="eyebrow">MAINFRAME MCP / LOCAL KNOWLEDGE FLOW</text>
   <text x="40" y="82" class="title">Your project knowledge, ready for the next conversation.</text>
-  <rect x="882" y="24" width="198" height="30" rx="15" fill="#e5f1e8"/>
+  <rect x="882" y="24" width="198" height="30" rx="15" fill="#223e2e"/>
   <text x="981" y="44" class="eyebrow accent" text-anchor="middle">LOCAL BY DEFAULT</text>
   <text x="40" y="124" class="eyebrow">YOUR PROJECT KNOWLEDGE</text>
-  <rect x="40" y="140" width="1040" height="116" rx="14" fill="#ffffff" stroke="#d7e1d8"/>
-  <rect x="64" y="164" width="480" height="68" rx="10" fill="#f7f9f5" stroke="#d7e1d8"/>
+  <rect x="40" y="140" width="1040" height="116" rx="14" fill="#18281f" stroke="#32483b"/>
+  <rect x="64" y="164" width="480" height="68" rx="10" fill="#1d3024" stroke="#32483b"/>
   <text x="84" y="190" class="heading">Project Markdown</text>
   <text x="84" y="216" class="body">Docs · research · playbooks · agent instructions</text>
-  <rect x="576" y="164" width="480" height="68" rx="10" fill="#eef5ee" stroke="#d7e1d8"/>
+  <rect x="576" y="164" width="480" height="68" rx="10" fill="#243d2c" stroke="#32483b"/>
   <text x="596" y="190" class="heading">Saved captures</text>
   <text x="596" y="216" class="body">Durable session notes · searched only when requested</text>
-  <path d="M56 288 H1064 Q1080 288 1080 304 V652 Q1080 668 1064 668 H396 Q380 668 380 652 V504 Q380 488 364 488 H56 Q40 488 40 472 V304 Q40 288 56 288 Z" fill="#ffffff" stroke="#cbd9ce" stroke-linejoin="round"/>
+  <path d="M56 288 H1064 Q1080 288 1080 304 V652 Q1080 668 1064 668 H396 Q380 668 380 652 V504 Q380 488 364 488 H56 Q40 488 40 472 V304 Q40 288 56 288 Z" fill="#18281f" stroke="#405c49" stroke-linejoin="round"/>
   <path class="rail" d="M304 232 V270 H28"/>
   <path class="rail" d="M816 232 V270 H28"/>
   <path class="flow" d="M28 270 V422 H56"/>
   <text x="64" y="320" class="eyebrow accent">ONE SHARED DAEMON</text>
   <text x="1056" y="320" class="small" text-anchor="end">one model stack · local index · every client</text>
   <text x="64" y="354" class="eyebrow">INDEXING</text>
-  <rect x="64" y="370" width="280" height="104" rx="12" fill="#f7f9f5" stroke="#d7e1d8"/>
+  <rect x="64" y="370" width="280" height="104" rx="12" fill="#1d3024" stroke="#32483b"/>
   <text x="84" y="400" class="heading">Watch and chunk</text>
   <text x="84" y="428" class="body">Track eligible files</text>
   <text x="84" y="452" class="body">Split by Markdown structure</text>
   <path class="flow" d="M344 422 H396"/>
-  <rect x="404" y="370" width="280" height="104" rx="12" fill="#f7f9f5" stroke="#d7e1d8"/>
+  <rect x="404" y="370" width="280" height="104" rx="12" fill="#1d3024" stroke="#32483b"/>
   <text x="424" y="400" class="heading">Embed documents</text>
   <text x="424" y="428" class="body">Harrier OSS v1 0.6B</text>
   <text x="424" y="452" class="body">Native BF16 embeddings</text>
   <path class="flow" d="M684 422 H736"/>
-  <rect x="744" y="370" width="312" height="104" rx="12" fill="#e8f2e9" stroke="#cbd9ce"/>
+  <rect x="744" y="370" width="312" height="104" rx="12" fill="#223e2e" stroke="#405c49"/>
   <text x="764" y="400" class="heading">Derived local index</text>
   <text x="764" y="428" class="body">Semantic vectors + keyword index</text>
   <text x="764" y="452" class="body accent">Rebuildable from your files</text>
   <text x="64" y="510" class="eyebrow">CALLER</text>
   <text x="404" y="510" class="eyebrow">SEARCH</text>
-  <rect x="64" y="526" width="280" height="112" rx="12" fill="#f7f9f5" stroke="#d7e1d8"/>
+  <rect x="64" y="526" width="280" height="112" rx="12" fill="#1d3024" stroke="#32483b"/>
   <text x="84" y="556" class="heading">Agent or terminal</text>
   <text x="84" y="584" class="body">MCP over HTTP or stdio</text>
   <text x="84" y="608" class="body">CLI uses the same daemon</text>
   <path class="flow" d="M344 582 H396"/>
-  <rect x="404" y="526" width="280" height="112" rx="12" fill="#f7f9f5" stroke="#d7e1d8"/>
+  <rect x="404" y="526" width="280" height="112" rx="12" fill="#1d3024" stroke="#32483b"/>
   <text x="424" y="556" class="heading">Find candidates</text>
   <text x="424" y="584" class="body">Harrier query embedding</text>
   <text x="424" y="608" class="body">Semantic + keyword retrieval</text>
   <path class="flow" d="M684 582 H736"/>
-  <rect x="744" y="526" width="312" height="112" rx="12" fill="#f7f9f5" stroke="#d7e1d8"/>
+  <rect x="744" y="526" width="312" height="112" rx="12" fill="#1d3024" stroke="#32483b"/>
   <text x="764" y="556" class="heading">Qwen3 reranking</text>
   <text x="764" y="584" class="body">Qwen3 Reranker 4B · INT8</text>
   <text x="764" y="608" class="body">Order passages for this question</text>
   <path class="flow" d="M900 474 V496 H544 V518"/>
   <text x="886" y="491" class="small" text-anchor="end">search this index</text>
   <path class="flow" d="M900 638 V690"/>
-  <rect x="40" y="698" width="1040" height="66" rx="12" fill="#e5f1e8" stroke="#cbd9ce"/>
+  <rect x="40" y="698" width="1040" height="66" rx="12" fill="#223e2e" stroke="#405c49"/>
   <text x="64" y="726" class="eyebrow accent">RETURN TO CALLER</text>
   <text x="64" y="752" class="heading">Relevant passages with verified source citations</text>
   <text x="1056" y="742" class="body" text-anchor="end">inspect · cite · capture what should persist</text>

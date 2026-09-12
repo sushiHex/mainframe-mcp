@@ -1,5 +1,6 @@
 include AGENTS.md CLAUDE.md CONTRIBUTING.md config.example.json
 include docs/architecture.svg docs/MAINFRAME_QUERY.md docs/PUBLIC_AUDIT.md docs/V2.md docs/PREVIEW_RELEASE.md
+include docs/architecture-dark.svg
 include docs/MODEL_COMPARISON.md
 include docs/RERANKER_CONTEXT.md
 include docs/EMBEDDING_TRIAL.md
