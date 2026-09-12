@@ -200,8 +200,11 @@ class BatchGate:
         self.wait()
         start = self.clock()
         monitor_before = self.monitor_wait_seconds
-        while self.clock() < self._ready_at:
-            self.sleep(min(.05, self._ready_at - self.clock()))
+        while True:
+            remaining = self._ready_at - self.clock()
+            if remaining <= 0:
+                break
+            self.sleep(min(.05, remaining))
             self.wait()
         self.idle_seconds += self.clock() - start - (self.monitor_wait_seconds - monitor_before)
         self.synchronize()
