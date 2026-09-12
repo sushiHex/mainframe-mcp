@@ -46,6 +46,16 @@ def test_presets_still_load():
     assert c["service"]["port"] == 7433  # preset merges over DEFAULTS
 
 
+def test_reranker_quantization_can_be_configured_in_json(tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"reranker": {"quantize": False}}), encoding="utf-8")
+    monkeypatch.delenv("MAINFRAME_RERANKER_QUANTIZE", raising=False)
+    assert load_config(path)["reranker"]["quantize"] is False
+    monkeypatch.setenv("MAINFRAME_RERANKER_QUANTIZE", "true")
+    assert load_config(path)["reranker"]["quantize"] is True
+    assert DEFAULTS["reranker"]["quantize"] is True
+
+
 def test_a_broken_config_refuses_instead_of_widening_the_scope(tmp_path, monkeypatch):
     """A truncated file used to log a warning and fall back to DEFAULTS — where
     `include_projects` is empty, i.e. EVERY project under repos_dir. A daemon

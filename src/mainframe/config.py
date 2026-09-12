@@ -39,8 +39,10 @@ DEFAULTS = {
         "batch_size": 8,
         "max_seq_length": 2048,
         "query_prefix": "Instruct: Find the most relevant code documentation or knowledge base entry\nQuery: ",
+        "encoding": "legacy", "revision": None, "query_prompt": None,
     },
-    "reranker": {"model": "Qwen/Qwen3-Reranker-4B", "enabled": True, "heading_inject": True},
+    "reranker": {"model": "Qwen/Qwen3-Reranker-4B", "enabled": True,
+                 "heading_inject": True, "quantize": True},
     "consolidator": {"model": "Qwen/Qwen2.5-3B-Instruct", "enabled": True, "quantize": True,
                      "max_new_tokens": 4096},
     "nli": {"model": "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli", "enabled": True,
@@ -163,6 +165,11 @@ def load_config(config_path: Path | None = None) -> dict:
     for k, v in config.get("paths", {}).items():
         if isinstance(v, str):  # include_projects/exclude_projects are glob lists, not paths
             config["paths"][k] = str(Path(v).expanduser())
+    from mainframe.core.encoding import native_contract
+    try:
+        native_contract(config)
+    except ValueError as error:
+        raise ConfigError(str(error)) from error
     return config
 
 

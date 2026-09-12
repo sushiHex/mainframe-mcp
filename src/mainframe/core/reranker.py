@@ -149,7 +149,9 @@ class Reranker:
                                     max_length=_QWEN3_MAX_LENGTH,
                                     return_tensors="pt").to(self.model.device)
             with torch.inference_mode():
-                logits = self.model(**inputs).logits[:, -1, :]
+                # Only the final token judges yes/no. Keep the full attention
+                # context, but avoid projecting every token into the vocabulary.
+                logits = self.model(**inputs, logits_to_keep=1).logits[:, -1, :]
             yes_no = torch.stack([logits[:, self._yes_id], logits[:, self._no_id]], dim=1)
             probs = torch.softmax(yes_no.float(), dim=1)[:, 0].cpu().tolist()
             for j, p in zip(idx, probs):

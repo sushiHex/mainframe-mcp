@@ -116,7 +116,8 @@ def open_existing_index(path, embedding_dim: int, config: dict):
         tables = []
     if "chunks" not in tables:
         sys.exit(f"no v2 index at {p} (no `chunks` table) — run --rebuild or point --db at a built index")
-    store = Store(db_path=p, embedding_dim=embedding_dim, **Store.search_kwargs_from_config(config))
+    store = Store(db_path=p, embedding_dim=embedding_dim, fingerprint=Store.fingerprint_from_config(config),
+                  **Store.search_kwargs_from_config(config))
     if "lane" not in [f.name for f in store.table.schema]:
         sys.exit(f"index at {p} is v1 — use the separate v2 index or run --rebuild")
     if store.table.count_rows() == 0:
@@ -362,6 +363,7 @@ def main():
             if TEMP_DB.exists():
                 shutil.rmtree(str(TEMP_DB))
             store = Store(db_path=TEMP_DB, embedding_dim=embedder.dimension,
+                          fingerprint=Store.fingerprint_from_config(config),
                           **Store.search_kwargs_from_config(config))
             if args.corpus_manifest:
                 files = corpus_from_manifest(config, args.corpus_manifest)

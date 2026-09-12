@@ -51,6 +51,10 @@ consolidation = ["llama-cpp-python>=0.3"]
 contextual = ["anthropic>=0.40"]
 # GPU-free test tier: fakes + real LanceDB (torch arrives via sentence-transformers).
 test = ["pytest>=8.0", "numpy"]
+# Optional telemetry and owned-worker integration tests for local model trials.
+eval = ["nvidia-ml-py>=12", "psutil>=5.9"]
+# Opt-in native BF16 encoding; keep upgrades inside a dedicated environment.
+native = ["sentence-transformers>=5.4.1", "transformers>=5.7.0", "packaging>=23"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

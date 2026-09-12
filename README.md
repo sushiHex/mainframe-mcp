@@ -18,6 +18,42 @@ Everything runs on your own GPU. Nothing leaves your machine at query time.
 - **Ops-hardened** — read-only search hot path, atomic manifest writes with crash recovery, index compaction + FTS refresh after ingest batches, poison-file-resilient syncs, path-traversal validation, and a layered secret-scrub denylist on every write path.
 - **Measured, not vibed** — an eval harness with a regression gate (`eval/evaluate.py --min-score`), an experiment-log discipline (`eval/results.template.md`), and a GPU-free test suite (fakes + real LanceDB) that runs in CI.
 
+Native Qwen reranking now projects only the final token into the vocabulary,
+preserving the full attention context and all 120 measured rankings while
+reducing the full Qwen stack's measured query-phase CUDA peak to **13.70 GiB**.
+Nemotron with that optimized reranker completed the same comparison at
+**8.20 GiB**: Mainframe passage matches stayed unchanged, while SciFact top-three
+recall fell from 90% to 89%. See the [measured comparison](docs/MODEL_COMPARISON.md)
+for scope, timings, and retrieval tradeoffs. Model and precision defaults remain unchanged.
+Harrier completed the same set at **6.97 GiB**, retaining Mainframe passage
+matches and improving SciFact top-three matches to **91/100**. It is the
+selected opt-in candidate: Voyage reached **6.71 GiB** allocation
+with the same aggregate hit rates, but slightly higher reservation and one lost
+first-place match. On a separate working sample, production native Harrier
+retained all 34 baseline top-three expected-passage matches and found three
+more, using **7.80 versus 14.33 GiB** peak CUDA allocation. That check used
+47 existing labels across 64 files; it is not an unseen-query evaluation.
+
+On 20 newly authored, source-grounded questions frozen before either run,
+both models found the expected document for every query and the labeled passage
+for 19. Harrier lost no baseline passage. Both missed one critical passage at
+reranking; [the results](docs/MODEL_COMPARISON.md#fresh-passage-based-challenge)
+retain that limitation and the test's authorship and scope.
+
+The [paced evaluation runner](eval/README.md#paced-retrieval-comparison) owns
+worker cleanup and a cooperative `vram-mcp` reservation, observes host/GPU memory,
+and separates active work, deliberate pacing, and monitoring waits. It imposes
+no estimated-memory admission cutoff, allocation cap, or fixed trial deadline.
+Expired cooperative claims are replaced before further work is permitted.
+The [adoption plan](docs/EMBEDDING_TRIAL.md) separates trial support from a
+default-model change. A normal, unpaced daemon trial completed on the 64-file
+copy with **7.03 GiB** peak CUDA allocation; the operator reported smooth
+interaction during searches. Displayed-frame timing remains unmeasured.
+
+Fresh questions can reuse a completed evaluation index when its corpus and
+encoding identity match. The [evaluation guide](eval/README.md) documents
+verification of older indexes through their original manifest.
+
 ## Requirements
 
 - Python 3.10+ (developed on 3.14). **3.11–3.13 have the broadest binary-wheel coverage**; on very new interpreters some deps (lancedb, pydantic-core) may not have Linux wheels yet — pin to 3.13 there if `pip install` fails building from source.
@@ -93,6 +129,14 @@ Both configuration loaders accept shared files containing v2 project-filter
 lists; v1 preserves those lists without treating them as filesystem paths.
 See [the v2 guide](docs/V2.md) for setup, commands, architecture, and recovery.
 
+The experimental [Harrier preset](configs/v2-harrier.json) uses the
+[native encoding option](docs/V2.md#native-embedding-contract):
+model-owned query/document routes in BF16, a pinned revision, and a separately
+identified index. Install `.[native]` in an isolated environment; v1 refuses
+native configurations. Use a separate state directory and explicit project
+scope; keep the old configuration and index for rollback. Normal daemon
+inference is unpaced; this preset does not change the default models.
+
 ### Validate a v2 deployment
 
 Start with one explicitly included project and a separate state directory.
@@ -104,6 +148,11 @@ Before GPU work, check available memory and coordinate capacity with other
 clients. If you use `vram-mcp`, reserve capacity for Mainframe's non-Ollama
 models, renew the reservation while running, and release it after shutdown.
 Reservations are cooperative and cannot prevent unrelated GPU allocations.
+They also do not limit GPU compute or protect desktop responsiveness. Use
+small-model trials interactively and schedule sustained large-model sweeps
+for a dedicated window. Before another shared-desktop sweep, establish memory
+monitoring, pacing, and responsiveness checks using the
+[GPU evaluation guidance](eval/README.md#shared-desktop-gpu-runs).
 
 On Windows, error 1455 means system commit capacity is exhausted. Check
 **Task Manager > Memory > Committed** and page file capacity as well as VRAM.

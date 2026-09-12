@@ -211,6 +211,8 @@ def load_config(config_path: Path | None = None) -> dict:
         if isinstance(v, str):  # Shared v2 configs also carry project-filter lists.
             config["paths"][k] = str(Path(v).expanduser())
 
+    if config.get('embedder', {}).get('encoding', 'legacy') != 'legacy':
+        raise ValueError('native embedding configuration requires v2; use the mainframe CLI')
     return config
 
 

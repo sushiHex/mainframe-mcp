@@ -15,6 +15,11 @@ repository is the development home. Read `AGENTS.md`, `CONTRIBUTING.md`, and
   at the other's index. v2 builds a new index on first startup.
 - v2 consolidation is not implemented. Its capture/receipt primitives do not
   imply a complete ambient consolidation loop.
+- v2 native encoding is opt-in: BF16, a pinned model revision, and model-owned
+  query/document routes. Start from `configs/v2-harrier.json` in separate state;
+  v1 refuses native configurations. Changed or missing native index identity
+  blocks reads and writes. Rebuild offline instead of editing the fingerprint.
+  See `docs/V2.md#native-embedding-contract`; defaults remain Qwen.
 
 | Path | Responsibility |
 |---|---|
@@ -91,6 +96,15 @@ environment and imports outside the checkout.
 set. Default v2 evaluation also uses a running daemon; offline evaluation
 uses the configured state directory. `eval/evaluate_v1.py` retains the v1
 harness. See `eval/README.md`.
+
+Before live GPU work, follow `eval/README.md#shared-desktop-gpu-runs`.
+Protect desktop responsiveness with measured telemetry and paced work; reserve
+sustained large-model sweeps for a dedicated window. A `vram-mcp` reservation
+or successful benchmark does not establish acceptable desktop performance.
+For candidate embeddings, use the staged plan in `docs/EMBEDDING_TRIAL.md`;
+the probe and sustained comparison observe memory without imposing estimated-headroom cutoffs,
+allocation caps, or a fixed duration limit. Honor explicit user limits; do not
+reinstate removed policy gates from unmeasured model-loading estimates.
 
 Use a synthetic corpus and separate state directory for live smoke tests.
 `mainframe validate --output ~/mainframe-validation/run-01` owns a fresh
