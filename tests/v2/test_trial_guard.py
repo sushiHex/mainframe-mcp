@@ -95,6 +95,34 @@ def test_pacing_keeps_real_forward_inputs_and_order(guard, tmp_path):
     assert not model._forward_hooks and not model._forward_pre_hooks
 
 
+def test_pacing_uses_one_remaining_value_when_clock_crosses_deadline(guard):
+    """A monotonic tick between comparisons must never produce sleep(-x)."""
+    readings = iter([0., 0., 9.99, 10.01])
+    checks, sleeps = [], []
+
+    def clock():
+        return next(readings, 10.01)
+
+    def permit():
+        checks.append(True)
+        return {'nonce': 'test', 'at': 0., 'allowed': True}
+
+    def sleep(seconds):
+        if seconds < 0:
+            raise ValueError('sleep length must be non-negative')
+        sleeps.append(seconds)
+
+    gate = guard.BatchGate(permit, 'test', clock=clock, sleep=sleep,
+                           stale_s=100., synchronize=lambda: None)
+    gate._ready_at = 10.
+    gate._before(None, (), {})
+
+    assert sleeps == pytest.approx([.01])
+    assert len(checks) == 3  # Before, after pacing, and before the forward.
+    assert gate.idle_seconds == pytest.approx(10.01)
+    assert gate._started_at == pytest.approx(10.01)
+
+
 def test_failed_forward_cannot_retry_with_a_smaller_batch(guard, tmp_path):
     import torch
 

@@ -181,6 +181,8 @@ python -m pytest tests/ -q
 
 Tests use fake models and temporary stores; they require no GPU or model downloads. CI also checks clean wheel installations on Windows and Linux. Read [CONTRIBUTING.md](CONTRIBUTING.md) and complete the [public push audit](docs/PUBLIC_AUDIT.md) before publishing. Retrieval changes need [measured evaluation](eval/README.md).
 
+For live model comparisons on a shared GPU, follow the [paced evaluation workflow](eval/README.md#shared-desktop-gpu-runs). It spaces model forwards while monitoring resources and cancellation.
+
 ## License
 
 [MIT](LICENSE).
