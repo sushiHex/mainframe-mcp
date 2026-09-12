@@ -1,12 +1,14 @@
 {
   "_name": "GPU Minimal — RTX 3050/4050 8GB, small embedder + small reranker",
   "_vram": "~2GB used, ~6GB free",
-
   "embedder": {
     "model": "BAAI/bge-base-en-v1.5",
     "quantize": false,
     "batch_size": 16,
-    "max_seq_length": 512
+    "max_seq_length": 512,
+    "encoding": "legacy",
+    "revision": null,
+    "query_prompt": null
   },
   "reranker": {
     "model": "cross-encoder/ms-marco-MiniLM-L12-v2",
@@ -29,10 +31,10 @@
     "rerank_top_k": 5
   },
   "tiers": {
-    "library": 0.90,
+    "library": 0.9,
     "project": 0.93,
     "docs": 0.95,
     "research": 0.97,
-    "archive": 1.10
+    "archive": 1.1
   }
 }

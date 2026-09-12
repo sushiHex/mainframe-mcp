@@ -96,7 +96,7 @@ def test_preset_still_applies_env_override(monkeypatch):
     """Finding #6: MAINFRAME_PRESET must not drop MAINFRAME_* env overrides."""
     from mainframe_mcp import config as cfg
 
-    monkeypatch.setenv("MAINFRAME_PRESET", "gpu-max")
+    monkeypatch.setenv("MAINFRAME_PRESET", "cpu-only")
     monkeypatch.setenv("MAINFRAME_EMBEDDER_MODEL", "my/custom-model")
     c = cfg.load_config()
     assert c["embedder"]["model"] == "my/custom-model"

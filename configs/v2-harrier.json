@@ -1,16 +1,12 @@
 {
-  "_name": "v2 Harrier native encoding trial",
-  "_notes": "Experimental opt-in profile; see docs/MODEL_COMPARISON.md for measured scope and the shared critical-passage miss. Requires the native extra. Set an explicit project scope before indexing; use separate state and retain the old configuration for rollback. Validate desktop interaction on your workload. Normal daemon inference is not paced by this preset.",
-  "paths": {
-    "mainframe_dir": "~/.claude/mainframe-harrier-preview",
-    "include_projects": ["example-project"]
-  },
-  "service": {"prewarm": false},
+  "_name": "Harrier BF16 with Qwen3 4B INT8 reranking",
+  "_notes": "Standard v2 stack; the old GPU profiles now use the measured Harrier contract. Choose explicit project scope before starting. See docs/RERANKER_CONTEXT.md for measured quality and memory tradeoffs.",
   "embedder": {
     "model": "microsoft/harrier-oss-v1-0.6b",
     "encoding": "native",
     "revision": "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
     "query_prompt": "web_search_query",
+    "query_prefix": "",
     "quantize": false,
     "batch_size": 8,
     "max_seq_length": 2048
@@ -21,7 +17,21 @@
     "quantize": true,
     "heading_inject": true
   },
-  "contextual": {"enabled": false},
-  "consolidator": {"enabled": false},
-  "nli": {"enabled": false}
+  "contextual": {
+    "enabled": false
+  },
+  "consolidator": {
+    "enabled": false
+  },
+  "nli": {
+    "enabled": false
+  },
+  "paths": {
+    "include_projects": [
+      "example-project"
+    ]
+  },
+  "service": {
+    "prewarm": false
+  }
 }

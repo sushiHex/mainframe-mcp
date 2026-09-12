@@ -1,17 +1,29 @@
 {
-  "_name": "GPU Shared - small Qwen3 embedding and native reranking",
-  "_notes": "Opt-in profile for scoped trials; measure host and GPU headroom. Retrieval quality is not assumed equivalent to larger models.",
+  "_name": "Harrier BF16 with Qwen3 4B INT8 reranking",
+  "_notes": "Standard v2 stack; the old GPU profiles now use the measured Harrier contract. Choose explicit project scope before starting. See docs/RERANKER_CONTEXT.md for measured quality and memory tradeoffs.",
   "embedder": {
-    "model": "Qwen/Qwen3-Embedding-0.6B",
-    "quantize": true,
+    "model": "microsoft/harrier-oss-v1-0.6b",
+    "encoding": "native",
+    "revision": "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
+    "query_prompt": "web_search_query",
+    "query_prefix": "",
+    "quantize": false,
     "batch_size": 8,
     "max_seq_length": 2048
   },
   "reranker": {
-    "model": "Qwen/Qwen3-Reranker-0.6B",
-    "enabled": true
+    "model": "Qwen/Qwen3-Reranker-4B",
+    "enabled": true,
+    "quantize": true,
+    "heading_inject": true
   },
-  "contextual": {"enabled": false},
-  "consolidator": {"enabled": false},
-  "nli": {"enabled": false}
+  "contextual": {
+    "enabled": false
+  },
+  "consolidator": {
+    "enabled": false
+  },
+  "nli": {
+    "enabled": false
+  }
 }

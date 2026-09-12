@@ -190,3 +190,14 @@ def test_model_load_failure_stops_validation_without_waiting_for_index_timeout(t
     with pytest.raises(RuntimeError, match="model load failed"):
         run.run()
     assert json.loads((run.output / "report.json").read_text())["status"] == "failed"
+
+
+def test_recorded_model_failure_wins_over_a_loading_status_snapshot(tmp_path, cfg, monkeypatch):
+    run = runner(tmp_path, cfg)
+    # Model state and recent events can be read on opposite sides of a failure.
+    monkeypatch.setattr(run, "request", lambda *args: {
+        "models": {"embedder": {"state": "loading"}},
+        "recent_events": [{"kind": "model.failed"}, {"kind": "job.failed"}],
+    })
+    with pytest.raises(RuntimeError, match="model load failed"):
+        run.indexed()

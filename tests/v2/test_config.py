@@ -7,6 +7,33 @@ import pytest
 from mainframe.config import DEFAULTS, ConfigError, deep_copy, load_config, load_preset
 
 
+def test_default_stack_uses_the_measured_harrier_contract(tmp_path, monkeypatch):
+    from mainframe.core.encoding import native_contract
+
+    for name in ("MAINFRAME_PRESET", "MAINFRAME_EMBEDDER_MODEL", "MAINFRAME_RERANKER_MODEL",
+                 "MAINFRAME_RERANKER_QUANTIZE"):
+        monkeypatch.delenv(name, raising=False)
+    config = load_config(tmp_path / "first-run.json")
+    assert config["embedder"]["model"] == "microsoft/harrier-oss-v1-0.6b"
+    contract = native_contract(config)
+    assert contract["revision"] == "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee"
+    assert contract["query_prompt"] == "web_search_query"
+    assert contract["dtype"] == "bfloat16" and contract["max_seq_length"] == 2048
+    assert config["reranker"]["model"] == "Qwen/Qwen3-Reranker-4B"
+    assert config["reranker"]["quantize"] is True
+    assert not config["consolidator"]["enabled"] and not config["nli"]["enabled"]
+
+
+@pytest.mark.parametrize("name", ["gpu-max", "gpu-light", "gpu-shared", "v2-harrier"])
+def test_gpu_presets_use_the_same_harrier_encoding(name):
+    from mainframe.core.encoding import native_contract
+
+    config = load_preset(name)
+    assert config["embedder"]["model"] == "microsoft/harrier-oss-v1-0.6b"
+    assert native_contract(config) == native_contract(DEFAULTS)
+    assert config["reranker"]["model"] == "Qwen/Qwen3-Reranker-4B"
+
+
 def test_defaults_have_required_sections():
     for key in ("paths", "service", "embedder", "reranker", "consolidator", "nli", "models",
                 "chunker", "search", "tiers", "index", "capture", "memory", "contextual"):

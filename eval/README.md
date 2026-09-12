@@ -24,7 +24,7 @@ record unrelated model allocations in the resource telemetry.
 ## Shared desktop GPU runs
 
 Treat desktop responsiveness as an acceptance criterion for live GPU work.
-Use the small Qwen INT8 profile for interactive trials; schedule sustained
+Use the default Harrier profile for interactive trials; schedule sustained
 large-model sweeps for a dedicated window. Neither profile has a desktop
 responsiveness guarantee. Follow this procedure before the next GPU run:
 
@@ -118,7 +118,7 @@ python eval/summarize_comparison.py D:/scratch/reference/report.json D:/scratch/
 
 Use `--candidate harrier` or `--candidate voyage` with its pinned local model
 in the configuration. Omit `--candidate` to exercise the configured production
-embedder: either the unchanged Qwen control or the opt-in
+embedder: either an explicitly configured legacy control or the
 [native encoding contract](../docs/V2.md#native-embedding-contract). For native
 Harrier, use the pinned revision, `quantize: false`, and saved
 `query_prompt: "web_search_query"`; do not add experimental adapter flags.

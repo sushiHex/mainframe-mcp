@@ -1,38 +1,29 @@
 {
-  "_name": "GPU Light — RTX 3060/4060 12GB, embedder + reranker only",
-  "_vram": "~10GB used, ~2GB free",
-
+  "_name": "Harrier BF16 with Qwen3 4B INT8 reranking",
+  "_notes": "Standard v2 stack; the old GPU profiles now use the measured Harrier contract. Choose explicit project scope before starting. See docs/RERANKER_CONTEXT.md for measured quality and memory tradeoffs.",
   "embedder": {
-    "model": "Qwen/Qwen3-Embedding-8B",
-    "quantize": true,
-    "batch_size": 4,
-    "max_seq_length": 4096
+    "model": "microsoft/harrier-oss-v1-0.6b",
+    "encoding": "native",
+    "revision": "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
+    "query_prompt": "web_search_query",
+    "query_prefix": "",
+    "quantize": false,
+    "batch_size": 8,
+    "max_seq_length": 2048
   },
   "reranker": {
-    "model": "BAAI/bge-reranker-v2-m3",
+    "model": "Qwen/Qwen3-Reranker-4B",
     "enabled": true,
-    "top_k": 5
+    "quantize": true,
+    "heading_inject": true
   },
-  "nli": {
+  "contextual": {
     "enabled": false
   },
   "consolidator": {
     "enabled": false
   },
-  "chunker": {
-    "chunk_size": 256,
-    "overlap_ratio": 0.35,
-    "min_section_tokens": 10
-  },
-  "search": {
-    "fetch_multiplier": 2,
-    "rerank_top_k": 5
-  },
-  "tiers": {
-    "library": 0.90,
-    "project": 0.93,
-    "docs": 0.95,
-    "research": 0.97,
-    "archive": 1.10
+  "nli": {
+    "enabled": false
   }
 }

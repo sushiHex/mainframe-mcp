@@ -1,7 +1,7 @@
 """GPU-accelerated embedding — model configurable via config.json.
 
-Loads INT8 quantized by default (~7.6GB VRAM for Qwen3-8B).
-Swap models by changing config.json or MAINFRAME_EMBEDDER_MODEL env var.
+Defaults to pinned Harrier BF16 with model-owned query and document encoding.
+Alternative models require their matching encoding contract in config.json.
 """
 
 import gc

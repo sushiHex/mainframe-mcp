@@ -1,8 +1,10 @@
 # 2.0.0a1 Preview
 
-This distribution includes the existing v1 MCP server and the opt-in v2 daemon.
-It does not change MCP registrations or migrate an existing index automatically.
-Use a separate environment and state directory for evaluation.
+The original tagged artifact includes the v1 server and opt-in v2 daemon.
+**Current public main has since promoted Harrier and the v2 daemon:**
+`mainframe-mcp` now forwards to v2. Install current source or its audited wheel
+for that behavior; the original release download below is historical.
+Existing indexes are not migrated automatically.
 
 ## Capabilities
 
@@ -51,10 +53,10 @@ before loading them and check [Windows startup memory](V2.md#startup-memory-diag
 
 ## Migrate deliberately
 
-1. Keep the current v1 environment, configuration, and MCP registration available.
-   Back up configuration and authoritative notes/captures before experimenting.
+1. Keep authoritative notes and captures. Install the current public source or
+   its audited wheel in the environment used by the daemon and clients.
 2. Create a separate v2 configuration using the example in [V2.md](V2.md).
-   Set a new `paths.mainframe_dir` and an explicit `paths.include_projects` list;
+   Select the intended `paths.mainframe_dir` and an explicit `paths.include_projects` list;
    an empty include list selects all eligible projects. Set `service.token` on
    shared machines. Point `MAINFRAME_CONFIG` at this file in every v2 shell/client.
 3. Run `mainframe validate --output ~/mainframe-validation/preview-01` before
@@ -63,7 +65,7 @@ before loading them and check [Windows startup memory](V2.md#startup-memory-diag
 4. Start `mainframe serve`, check `mainframe status`, and search the selected
    project. The first start builds a fresh v2 index and re-embeds its corpus;
    it does not reuse or convert v1's `.lancedb`.
-5. Register the v2 HTTP MCP endpoint or stdio shim only after those checks pass.
+5. Register the v2 HTTP MCP endpoint or `mainframe-mcp` after those checks pass.
    Index-setting drift blocks writes; stop the daemon before `mainframe rebuild`.
    `mainframe reload` releases models and resets backoff; restart to read config edits.
 
@@ -72,9 +74,10 @@ Exercise real questions and capture recall through separate MCP sessions before
 expanding scope. Continue observing ordinary work over time; synthetic checks
 and a bounded trial do not establish retrieval quality or long-term stability.
 
-## Roll back
+## Legacy v1 operation
 
-Run `mainframe down` with the v2 configuration and confirm it has stopped. Restore
+Legacy v1 is an explicit choice, not the default or a required rollback.
+If using it, run `mainframe down` and confirm it has stopped. Restore
 the original v1 environment, configuration, and MCP registration
 (`python -u -m mainframe_mcp.server`). Its separate index remains available.
 Keep v2 captures and source notes: rollback does not import them into v1 or undo
@@ -106,4 +109,5 @@ and metadata record. Scan archives and extracted contents, inspect the file
 inventory, and record hashes in `SHA256SUMS`. Record the build commit, tool
 versions, checks, and live-validation scope in the release notes. Keep raw
 logs and private corpora outside the publication. Prepare a **draft prerelease**;
-publishing it or changing defaults is a separate maintainer decision.
+publishing release artifacts requires a maintainer decision. Harrier default
+promotion on public main is separate from the original tagged artifact.
