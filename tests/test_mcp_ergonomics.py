@@ -42,11 +42,13 @@ def test_mainframe_config_env_overrides_path(tmp_path, monkeypatch):
     assert loaded["tiers"]["library"] == 0.42
 
 
-def test_mainframe_config_absent_falls_back_to_default(monkeypatch):
+def test_mainframe_config_absent_falls_back_to_default(tmp_path, monkeypatch):
+    default_cfg = tmp_path / "config.json"
+    default_cfg.write_text(json.dumps({"tiers": {"library": 0.314}}), encoding="utf-8")
+    monkeypatch.setattr(config_mod, "DEFAULT_CONFIG_PATH", default_cfg)
     monkeypatch.delenv("MAINFRAME_CONFIG", raising=False)
-    # must not raise and must return a populated default config
     loaded = config_mod.load_config()
-    assert "embedder" in loaded and "paths" in loaded
+    assert loaded["tiers"]["library"] == 0.314
 
 
 def test_explicit_path_still_wins_over_env(tmp_path, monkeypatch):
