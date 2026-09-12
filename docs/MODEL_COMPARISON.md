@@ -3,10 +3,10 @@
 Measured on September 10–11, 2026.
 
 Harrier native BF16 is the default embedder on public main. The later
-[reranker comparison](RERANKER_COMPARISON.md) selects Qwen3 Reranker 4B NF4 as
-the preferred shared-GPU configuration after its production scoring replay and
-installed synthetic daemon smoke passed. The tables below retain their
-historical INT8 reranker baselines and experimental status at measurement time.
+[reranker comparison](RERANKER_COMPARISON.md) selects the pinned Qwen3-Reranker-0.6B BF16 `<Document>` contract from a
+separate source-grounded evaluation. The older control measurements remain
+historical. The tables below retain their historical INT8 reranker baselines
+and experimental status at measurement time.
 
 ## Scope and method
 
@@ -28,7 +28,7 @@ Raw manifests, queries, indexes, and reports remain outside Git.
 
 All runs use 256-token chunks, 35% overlap, a candidate pool of 20, heading
 injection, and three returned chunks. Embedding context is capped at 2,048
-tokens. Existing Qwen prompts, INT8 batching, and document clamps are preserved.
+tokens. These historical trials preserve their recorded Qwen prompts, INT8 batching, and document clamps.
 Ettin uses its trained CrossEncoder modules in BF16 with SDPA; Nemotron uses
 model-owned query/document prompts, attention, and mean pooling in BF16.
 Experimental adapters are confined to the harness. The private Harrier check
@@ -169,8 +169,8 @@ fell from 85% to 75%. Peak allocated/reserved memory was 4.315/4.902 GiB.
 Quantization and batch composition can affect retrieval; faster inference
 does not establish quality parity. At the time of this measurement, the default
 remained INT8. The later [reranker comparison](RERANKER_COMPARISON.md) records
-the NF4 selection and its quality tradeoff. v2 accepts `reranker.quantize` in
-JSON as well as through `MAINFRAME_RERANKER_QUANTIZE`.
+the later Qwen 0.6B BF16 selection and its evaluation limits. A reranker change
+reorders existing candidates and does not require re-embedding.
 
 ## Paced Nemotron embedding probe
 
@@ -471,7 +471,7 @@ is claimed. See [PresentMon's capture documentation](https://github.com/GameTech
 ## Validation and decision
 
 The original model comparisons in this document use the character-clamped reranker.
-The subsequent [token-budget regression check](RERANKER_CONTEXT.md#measured-follow-up-2026-09-11)
+The subsequent [token-budget regression check](RERANKER_CONTEXT.md)
 restores the hidden critical passage without changing indexes. It records
 first-place ranking tradeoffs separately; the original measurements and labels
 here are preserved.
@@ -496,9 +496,9 @@ known challenge. Promotion accepts the documented first-place tradeoffs; that
 reused challenge is no longer a fresh holdout. Voyage passes the aggregate
 public check but offers a smaller incremental memory saving. These conclusions
 use the historical INT8 reranker. The later
-[reranker comparison](RERANKER_COMPARISON.md) selects Qwen 4B NF4 as a measured
-shared-GPU tradeoff after its production scoring replay and installed synthetic
-daemon smoke passed.
+[reranker comparison](RERANKER_COMPARISON.md) selects Qwen3-Reranker-0.6B
+BF16 from a later, separate evaluation. The historical INT8 baselines in this
+document remain historical.
 
 The live synthetic daemon soak and normal daemon trial passed. The operator
 reported smooth interaction during the validation session; displayed-frame

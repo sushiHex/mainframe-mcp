@@ -26,17 +26,15 @@ DEFAULTS = {
         "query_prefix": "Instruct: Find the most relevant code documentation or knowledge base entry\nQuery: ",
     },
 
-    # Reranker. Qwen3-Reranker-4B via the native qwen3-logit backend scored
-    # 0.4187 vs bge's 0.3320 (+26%) on the pool-20 harness (2026-07-01d) at the
-    # cost of ~8s/query (vs ~2-4s) and ~4.5GB VRAM (vs 1.2GB). Rollback:
-    # MAINFRAME_RERANKER_MODEL=BAAI/bge-reranker-v2-m3.
+    # Native BF16 compact reranker; measured contracts and tradeoffs are in
+    # docs/COMPACT_RERANKERS.md. Changing models clears the inherited pin.
     "reranker": {
-        "model": "Qwen/Qwen3-Reranker-4B",
-        "revision": "22e683669bc0f0bd69640a1354a6d0aebcfeede5",
+        "model": "Qwen/Qwen3-Reranker-0.6B",
+        "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
         "enabled": True,
         "top_k": 3,
         "heading_inject": True,
-        "quantize": True,
+        "quantize": False,
     },
 
     # NLI contradiction detection

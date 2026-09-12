@@ -15,9 +15,11 @@ repository is the development home. Read `AGENTS.md`, `CONTRIBUTING.md`, and
   at the other's index. v2 builds a new index on first startup.
 - v2 consolidation is not implemented. Its capture/receipt primitives do not
   imply a complete ambient consolidation loop.
-- Harrier 0.6B native BF16 is the v2 default, paired with Qwen3 Reranker 4B:
-  NF4 with BF16 compute on CUDA and BF16 otherwise. Core dependencies include
-  the measured native library pair.
+- Harrier 0.6B native BF16 is the v2 default, paired with Qwen3 Reranker
+  0.6B in BF16 at revision `e61197ed45024b0ed8a2d74b80b4d909f1255473`.
+  The native suffix-preserving `<Document>` technical-documentation contract
+  uses a 2,048-token pair budget, saved-order batches of eight, and three
+  returned passages by default.
   `mainframe-mcp` forwards stdio to the daemon; it does not start another stack.
 - Changed or missing native index identity blocks reads and writes. Rebuild
   offline instead of editing the fingerprint. Do not silently reuse Qwen vectors
@@ -74,14 +76,15 @@ model caches outside public Git.
   writes; incompatible embedding changes also block search until rebuilding.
 - Citation lines require a matching file hash and a verified passage.
   Ambiguous matches must never receive guessed source spans.
-- Preserve native reranker prompt tokens, query/context bounds, NF4 settings,
+- Preserve the selected native reranker prompt tokens, query/context bounds,
   and saved-order batches of eight. The shared `mainframe_mcp.qwen` helper
-  budgets documents in tokens and
-  reserves the scoring suffix; character counts are not context budgets.
-  One-shot reranking projects only the final token and disables the unused
-  decoder cache. See [reranker measurements](docs/RERANKER_COMPARISON.md).
-  Batch composition can affect quantized scores. Retrieval changes
-  require evaluation, even when automated behavior tests pass.
+  budgets documents in tokens and reserves the scoring suffix; character counts
+  are not context budgets. One-shot reranking projects only the final token and
+  disables the unused decoder cache. Its relative yes/no score orders passages;
+  it is not correctness confidence. See [reranker measurements](docs/RERANKER_COMPARISON.md).
+  A reranker replacement does not require re-embedding; embedding-contract
+  changes do. Retrieval changes require evaluation, even when automated
+  behavior tests pass.
 - Projected store reads must avoid loading vector columns. Read errors must
   not masquerade as an empty ledger or trigger accidental deletion.
 - Scrub captures and provenance before writing files or events. Scrubbing

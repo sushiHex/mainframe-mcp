@@ -34,7 +34,7 @@ def test_concise_shape_and_line_spans(cfg, store, fake_embedder, fake_reranker, 
                  "## Qwen reranker\n\nqwen3 reranker hybrid search details here.\n")
     _index(store, fake_embedder, [LaneFile(canonical(p), "knowledge", "p")])
     out = _svc(cfg, store, fake_embedder, fake_reranker).search("qwen3 reranker hybrid", limit=3)
-    assert out["confidence"] == "high" and "guidance" not in out
+    assert out["confidence"] == "unavailable" and "guidance" not in out
     r = out["results"][0]
     assert set(r) == {"file", "heading", "line_start", "line_end", "rerank_score", "snippet"}
     assert r["heading"] == "Qwen reranker" and r["line_start"] == 5 and r["line_end"] == 7
@@ -121,18 +121,21 @@ def test_citation_recovery_still_requires_indexed_revision(tmp_path):
     assert not out
 
 
-def test_empty_and_low_confidence_guidance(cfg, store, fake_embedder, tmp_path):
-    class LowReranker:
+@pytest.mark.parametrize("score", [-2.5, 1.5])
+def test_empty_guidance_and_raw_scores_have_no_confidence_threshold(
+        cfg, store, fake_embedder, tmp_path, score):
+    class RawLogitReranker:
         enabled = True; heading_inject = False; default_top_k = 3
         def rerank(self, q, docs, top_k=None, headings=None):
-            return [(i, 0.1) for i in range(min(top_k or 3, len(docs)))]
-    svc = SearchService(_models(cfg, fake_embedder, LowReranker()), store, cfg)
+            return [(i, score) for i in range(min(top_k or 3, len(docs)))]
+    svc = SearchService(_models(cfg, fake_embedder, RawLogitReranker()), store, cfg)
     out = svc.search("anything")
     assert out["confidence"] == "none" and "include_sessions" in out["guidance"]
     p = write_md(tmp_path / "repos" / "p" / "docs" / "a.md", "# T\n\nqwen3 reranker text.\n")
     _index(store, fake_embedder, [LaneFile(canonical(p), "knowledge", "p")])
     out = svc.search("qwen3")
-    assert out["confidence"] == "low" and "rerank_score" in out["guidance"]
+    assert out["confidence"] == "unavailable" and "guidance" not in out
+    assert out["results"][0]["rerank_score"] == round(score, 4)
 
 
 def test_limit_is_clamped_and_sessions_opt_in(cfg, store, fake_embedder, fake_reranker, tmp_path):

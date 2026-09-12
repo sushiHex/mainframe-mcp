@@ -1,8 +1,8 @@
-"""Cross-encoder reranking — model configurable via config.json.
+"""Passage reranking — model configurable via config.json.
 
 Two scoring backends:
-- "cross-encoder" (default): sentence-transformers CrossEncoder (bge et al.).
-- "qwen3-logit": native Qwen3-Reranker scoring — the model is a CAUSAL LM that
+- "cross-encoder": sentence-transformers CrossEncoder (bge et al.).
+- "qwen3-logit" (default): native Qwen3-Reranker scoring — the model is a CAUSAL LM that
   judges yes/no; the score is P("yes") from the last-position logits. Loading it
   through CrossEncoder would silently mis-score it (no sequence-classification
   head), which is why the seq-cls conversions exist — but the native head +
@@ -20,7 +20,11 @@ import warnings
 import torch
 from sentence_transformers import CrossEncoder
 
-from mainframe_mcp.qwen import tokenize_with_suffix
+from mainframe_mcp.qwen import (
+    _QWEN3_QUERY_CHAR_CLAMP,
+    qwen3_pair_text,
+    tokenize_with_suffix,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +43,6 @@ _QWEN3_DEFAULT_INSTRUCTION = (
 # preserved code blocks and long paragraphs can exceed 3,000 characters while
 # still fitting the context. tokenize_with_suffix reserves the scoring suffix.
 # Changes to these limits require a retrieval evaluation.
-_QWEN3_QUERY_CHAR_CLAMP = 1000
 _QWEN3_MAX_LENGTH = 2048
 _QWEN3_BATCH_SIZE = 8
 
@@ -54,15 +57,6 @@ def detect_backend(model_name: str, cfg_backend: str | None = None) -> str:
     if "qwen3-reranker" in name and "seq-cls" not in name:
         return "qwen3-logit"
     return "cross-encoder"
-
-
-def qwen3_pair_text(query: str, doc: str, instruction: str) -> str:
-    """Mainframe's measured <Instruct>/<Query>/<Doc> scoring body.
-
-    Qwen's published template uses <Document>; changing this requires evaluation.
-    """
-    return (f"<Instruct>: {instruction}\n<Query>: {query[:_QWEN3_QUERY_CHAR_CLAMP]}\n"
-            f"<Doc>: {doc}")
 
 
 class Reranker:
@@ -82,7 +76,7 @@ class Reranker:
         self._backend = detect_backend(self.model_name, cfg.get("backend"))
         self.instruction = cfg.get("instruction", _QWEN3_DEFAULT_INSTRUCTION)
         self.revision = cfg.get("revision")
-        self.quantize = cfg.get("quantize", True)  # qwen3-logit only: NF4 on CUDA vs BF16
+        self.quantize = cfg.get("quantize", False)  # qwen3-logit only: opt-in NF4 on CUDA
 
         logger.info(f"Loading reranker {self.model_name} ({self._backend}) on {device}...")
         old_stdout, old_stderr = sys.stdout, sys.stderr
@@ -94,9 +88,6 @@ class Reranker:
             if self._backend == "qwen3-logit":
                 self._load_qwen3(device)
             else:
-                # mxbai-rerank is missing score.weight — PyTorch randomly inits it.
-                # Fix seed so the init is reproducible across process loads.
-                torch.manual_seed(42)
                 self.model = CrossEncoder(self.model_name, device=device, trust_remote_code=True,
                                           revision=self.revision)
         finally:
@@ -106,7 +97,7 @@ class Reranker:
         logger.info("Reranker loaded.")
 
     def _load_qwen3(self, device: str):
-        """Load the measured Qwen contract: NF4 on CUDA, BF16 otherwise."""
+        """Load the measured Qwen contract: BF16, or opt-in NF4 on CUDA."""
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         identity = {"trust_remote_code": True}
@@ -174,15 +165,17 @@ class Reranker:
 
     @property
     def info(self) -> dict:
-        """What is actually loaded — backends span 0.33-0.42 composite quality
-        and 2-8s/query, so status() must be able to say which one is live."""
+        """Report the loaded model identity and native scoring contract."""
+        backend = getattr(self, "_backend", "disabled" if not self.enabled else "?")
         return {
             "model": self.model_name,
-            "backend": getattr(self, "_backend", "disabled" if not self.enabled else "?"),
+            "backend": backend,
             "revision": getattr(self, "revision", None),
             "precision": getattr(self, "_precision", None),
-            "batch_size": (_QWEN3_BATCH_SIZE if getattr(self, "_backend", None)
-                           == "qwen3-logit" else None),
+            "batch_size": (_QWEN3_BATCH_SIZE if backend == "qwen3-logit" else None),
+            "context_length": (_QWEN3_MAX_LENGTH if backend == "qwen3-logit" else None),
+            "score_type": ("conditional-yes-probability"
+                           if backend == "qwen3-logit" else None),
             "enabled": self.enabled,
         }
 

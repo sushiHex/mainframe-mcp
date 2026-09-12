@@ -7,15 +7,12 @@ import re
 from mainframe.core.hashing import file_hash
 
 MAX_RESULTS = 10
-LOW_CONFIDENCE = 0.3
 SNIPPET_CHARS = 200
 TEXT_CHARS = 500
 
 _EMPTY_GUIDANCE = ("No matches. Rephrase with SPECIFIC technical terms (function/class/proper "
                    "names, exact config keys, error strings) — natural-language questions rank "
                    "poorly. Or set include_sessions=true to also search raw session captures.")
-_LOW_GUIDANCE = ("Best rerank_score < 0.3 (likely noise). Rephrase with more specific technical "
-                 "terms. Trust rerank_score (higher = better), not score.")
 
 
 def line_span(text: str, char_start: int, char_end: int) -> tuple[int, int]:
@@ -76,11 +73,10 @@ class SearchService:
         ranked = self.models.invoke("reranker", lambda r: r.rerank(query, texts, top_k=limit, headings=headings))
         results = [self._shape(raw[i], float(s), response_format) for i, s in ranked]
         self._add_line_spans(raw, ranked, results)
-        best = max((r["rerank_score"] for r in results), default=0.0)
-        payload = {"results": results, "confidence": "high" if best >= LOW_CONFIDENCE else "low"}
-        if best < LOW_CONFIDENCE:
-            payload["guidance"] = _LOW_GUIDANCE
-        return payload
+        # Reranker scores are model-native ordering signals. Some backends
+        # expose probabilities while others expose unbounded logits, so an
+        # absolute threshold cannot represent confidence across backends.
+        return {"results": results, "confidence": "unavailable"}
 
     @staticmethod
     def _shape(row: dict, score: float, fmt: str) -> dict:

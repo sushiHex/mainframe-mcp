@@ -26,7 +26,7 @@ def test_final_token_projection_preserves_scores_and_fixed_batch_order(module):
             return {"x": 0}
 
         def __call__(self, texts, **kwargs):
-            ids = [int(re.search(r"<Doc>: document-(\d+)", text)[1]) for text in texts]
+            ids = [int(re.search(r"<Document>: document-(\d+)", text)[1]) for text in texts]
             batches.append(ids)
             return {"input_ids": [[i, i] for i in ids]}
 

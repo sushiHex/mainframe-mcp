@@ -42,12 +42,13 @@ The full MCP endpoint exposes `search`. Its request arguments are:
 from ordinary retrieval. `response_format` is `concise`, `detailed`, or
 `full`; concise is the default.
 
-Every response contains `results` and `confidence`; an empty or low-confidence
-response also includes guidance. Each result always has `file`, `heading`,
+Every response contains `results` and `confidence`. `confidence` is
+`unavailable` for a nonempty result set and `none` for an empty result set; it
+does not estimate answer correctness. Each result always has `file`, `heading`,
 `rerank_score`, and a short `snippet`. `rerank_score` orders the retrieved
-candidates by relevance to this query. It is useful for comparison within that
-response, but it is not a claim that a passage is true, current, or applicable
-to the task.
+candidates within that response. It is useful for comparison there, but it is
+not a claim that a passage is true, current, applicable, or sufficient to
+answer the task.
 
 For citations or close review, request `detailed`:
 
@@ -97,8 +98,10 @@ an incomplete queue, or index drift. The full endpoint also exposes
 `maintain`: `index`/`rescan`, `optimize`, and `reload`; the read-only `/mcp/ro`
 endpoint offers only `search` and `status`.
 
-An index configuration change can require an offline rebuild. Stop the daemon,
-then run `mainframe rebuild`, then start it again with `mainframe serve`.
+An embedding or chunking configuration change can require an offline rebuild.
+Changing only the reranker does not: it reorders the existing first-stage
+candidates. For an embedding or chunking change, stop the daemon, then run
+`mainframe rebuild`, then start it again with `mainframe serve`.
 See the [v2 daemon guide](V2.md#index-ownership-and-recovery) for the exact
 recovery sequence. This replaces the legacy v1 tool list; see the
 [migration guide](PREVIEW_RELEASE.md) when working with an older setup.

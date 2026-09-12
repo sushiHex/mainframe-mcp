@@ -10,10 +10,10 @@
     "max_seq_length": 2048
   },
   "reranker": {
-    "model": "Qwen/Qwen3-Reranker-4B",
-    "revision": "22e683669bc0f0bd69640a1354a6d0aebcfeede5",
+    "model": "Qwen/Qwen3-Reranker-0.6B",
+    "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
     "enabled": true,
-    "quantize": true,
+    "quantize": false,
     "heading_inject": true
   },
   "service": {

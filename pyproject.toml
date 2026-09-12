@@ -22,7 +22,7 @@ dependencies = [
     # table.to_lance() — lancedb does NOT pull pylance in on its own, and
     # without it dedup silently degrades to no-op (empty donor sets).
     "pylance>=0.20",
-    # The default Qwen reranker uses NF4; Harrier embedding uses native BF16.
+    # Optional quantized backends; the default Harrier/Qwen stack uses BF16.
     "bitsandbytes>=0.43",
     # Qwen's quantized loader requires
     # accelerate — it is NOT pulled in transitively on a clean install.

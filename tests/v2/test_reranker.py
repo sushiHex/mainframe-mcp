@@ -12,8 +12,14 @@ def test_backend_detection():
 
 def test_pair_text_bounds_query_but_leaves_document_for_token_budget():
     t = rr.qwen3_pair_text("q" * 2000, "d" * 5000, "inst")
-    assert t.startswith("<Instruct>: inst\n<Query>: ") and "<Doc>: " in t
+    assert t.startswith("<Instruct>: inst\n<Query>: ") and "<Document>: " in t
     assert t.count("q") == rr._QWEN3_QUERY_CHAR_CLAMP and t.count("d") == 5000
+
+
+def test_pair_text_is_shared_with_v1():
+    from mainframe_mcp.qwen import qwen3_pair_text
+
+    assert rr.qwen3_pair_text is qwen3_pair_text
 
 
 def test_category_machinery_is_gone():

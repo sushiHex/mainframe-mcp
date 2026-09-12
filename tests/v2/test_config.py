@@ -19,8 +19,9 @@ def test_default_stack_uses_the_measured_harrier_contract(tmp_path, monkeypatch)
     assert contract["revision"] == "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee"
     assert contract["query_prompt"] == "web_search_query"
     assert contract["dtype"] == "bfloat16" and contract["max_seq_length"] == 2048
-    assert config["reranker"]["model"] == "Qwen/Qwen3-Reranker-4B"
-    assert config["reranker"]["quantize"] is True
+    assert config["reranker"]["model"] == "Qwen/Qwen3-Reranker-0.6B"
+    assert config["reranker"]["revision"] == "e61197ed45024b0ed8a2d74b80b4d909f1255473"
+    assert config["reranker"]["quantize"] is False
     assert not config["consolidator"]["enabled"] and not config["nli"]["enabled"]
 
 
@@ -31,7 +32,9 @@ def test_gpu_presets_use_the_same_harrier_encoding(name):
     config = load_preset(name)
     assert config["embedder"]["model"] == "microsoft/harrier-oss-v1-0.6b"
     assert native_contract(config) == native_contract(DEFAULTS)
-    assert config["reranker"]["model"] == "Qwen/Qwen3-Reranker-4B"
+    assert config["reranker"]["model"] == "Qwen/Qwen3-Reranker-0.6B"
+    assert config["reranker"]["revision"] == "e61197ed45024b0ed8a2d74b80b4d909f1255473"
+    assert config["reranker"]["quantize"] is False
 
 
 def test_defaults_have_required_sections():
@@ -141,7 +144,7 @@ def test_reranker_quantization_can_be_configured_in_json(tmp_path, monkeypatch):
     assert load_config(path)["reranker"]["quantize"] is False
     monkeypatch.setenv("MAINFRAME_RERANKER_QUANTIZE", "true")
     assert load_config(path)["reranker"]["quantize"] is True
-    assert DEFAULTS["reranker"]["quantize"] is True
+    assert DEFAULTS["reranker"]["quantize"] is False
 
 
 def test_a_broken_config_refuses_instead_of_widening_the_scope(tmp_path, monkeypatch):

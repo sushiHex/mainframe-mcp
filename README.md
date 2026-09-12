@@ -130,7 +130,7 @@ The default MCP endpoint exposes four tools:
 | `status` | Inspect index readiness, model state, and configuration drift. |
 | `maintain` | Request a rescan, optimization, or model reload. Rebuilding is an offline operation. |
 
-**Search → inspect → cite → capture.** Use a focused question with concrete project terms. Read the source when the excerpt is truncated or the answer matters. A reranker score measures relevance, not factual correctness; reconcile conflicts and acknowledge missing evidence. Capture durable decisions and their rationale when the user wants them retained.
+**Search → inspect → cite → capture.** Start with three results and a focused question. Read the source when the excerpt is truncated or a required detail is missing; request up to five results when you need more evidence. Scores order passages for that question; they do not establish factual confidence. Reconcile conflicts and acknowledge missing evidence. Capture durable decisions and their rationale when the user wants them retained.
 
 The [agent query guide](docs/MAINFRAME_QUERY.md) has exact request examples, response fields, and an instruction block you can adapt. Saving a capture is not an automatic consolidation step.
 
@@ -151,18 +151,24 @@ Reranking reads up to 2,048 tokens per prompt. Longer passages are truncated, wi
 | Role | Default model | Precision | Weight license |
 | --- | --- | --- | --- |
 | Embedding | [Microsoft Harrier OSS v1 0.6B](https://huggingface.co/microsoft/harrier-oss-v1-0.6b) | BF16, pinned native encoding | MIT |
-| Reranking | [Qwen3 Reranker 4B](https://huggingface.co/Qwen/Qwen3-Reranker-4B) | NF4 with BF16 compute on CUDA; BF16 otherwise | Apache-2.0 |
+| Reranking | [Qwen3 Reranker 0.6B](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B) | BF16, pinned native scoring | Apache-2.0 |
 
-NF4 is the selected shared-GPU configuration. In the isolated reranker
-comparison, loaded allocation fell from 4.113 GiB for the historical INT8
-control to 2.493 GiB for NF4. Its production scoring contract reproduced all
-3,740 scores exactly, and an installed two-document synthetic daemon smoke
-passed startup, search, mutation, restart, and cleanup checks. The memory saving
-comes with documented ranking tradeoffs; allow headroom for allocator
-reservation, larger inputs, and other GPU workloads. See
-[embedding comparisons](docs/MODEL_COMPARISON.md), the
-[reranker comparison](docs/RERANKER_COMPARISON.md), and
-[reranker context validation](docs/RERANKER_CONTEXT.md) for methods and limits.
+The compact reranker uses **1.110 GiB of loaded model allocation**, down from
+2.493 GiB for the previous 4B NF4 model: **55% less**. On the same 36 fresh
+validation questions, peak allocation fell from 3.233 to 1.395 GiB. These are
+isolated reranker measurements; allow additional memory for Harrier, allocator
+reservation, and your other applications.
+
+In agent review, top-three passages contained all required facts for **33/36
+questions** with either model; the compact model covered **8/8 designated critical cases**,
+versus 7/8 for the control. There are individual losses as well as gains. See
+the [compact comparison](docs/COMPACT_RERANKERS.md) for candidate trials,
+tradeoffs, and validation limits, and [embedding comparisons](docs/MODEL_COMPARISON.md)
+for Harrier's measurements.
+
+To upgrade an existing installation, use the reranker settings in
+[config.example.json](config.example.json) and restart the daemon. Changing only
+the reranker does **not** require re-embedding your files.
 
 The daemon supports capture, indexing, and search. Consolidation, contradiction detection, and RAPTOR remain [legacy v1 features](docs/PREVIEW_RELEASE.md#capabilities). Changing embedding settings requires a matching index; follow the [offline rebuild procedure](docs/V2.md#index-ownership-and-recovery).
 

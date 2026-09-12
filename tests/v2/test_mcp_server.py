@@ -54,7 +54,7 @@ def test_search_status_maintain_over_mcp(cfg, store, tmp_path):
     with c:
         res = rpc(c, "/mcp", "tools/call", {"name": "search", "arguments": {"query": "qwen3 reranker"}})["result"]
         payload = json.loads(res["content"][0]["text"])
-        assert payload["confidence"] == "high" and payload["results"][0]["file"].endswith("a.md")
+        assert payload["confidence"] == "unavailable" and payload["results"][0]["file"].endswith("a.md")
         st = json.loads(rpc(c, "/mcp/ro", "tools/call", {"name": "status", "arguments": {}})["result"]["content"][0]["text"])
         assert st["index"]["rows"] == 1
         rep = json.loads(rpc(c, "/mcp", "tools/call", {"name": "maintain", "arguments": {"action": "index"}})["result"]["content"][0]["text"])
