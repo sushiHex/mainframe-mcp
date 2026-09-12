@@ -9,9 +9,10 @@
 - Readers refresh via `read_consistency_interval`; the cleanup window is
   asserted far larger than that interval so a reader is never pinned to a
   version that compaction deletes.
-- One sidecar answers "what produced these rows?": the FINGERPRINT of the
+- A fingerprint answers "what produced these rows?": the FINGERPRINT of the
   settings they were built under, so a changed chunk size or embedder is
-  detected instead of silently mixing two regimes into one index.
+  detected instead of silently mixing two regimes into one index. Native
+  encoding also persists that identity in the table schema.
 - There is no ownership protocol, because there is no collision to arbitrate:
   v2 keeps its rows in `<mainframe_dir>/index.lancedb` while the still-
   installed v1 (`mainframe_mcp`) keeps its own `.lancedb`. Two namespaces are
@@ -43,10 +44,12 @@ _HEX32 = re.compile(r"[0-9a-f]{32}")
 INDEX_DIRNAME = "index.lancedb"
 FORMAT_VERSION = 1
 
-# The one fingerprint field whose change makes the STORED VECTORS incomparable
+# The fingerprint fields whose change makes the STORED VECTORS incomparable
 # to a freshly embedded query, rather than merely making the index
 # heterogeneous. See `IndexStaleError` for why that asymmetry exists.
 EMBEDDER_FIELD = "embedder_model"
+ENCODING_FIELD = "embedding_contract"
+_NATIVE_FINGERPRINT = b'mainframe.native_fingerprint'
 
 
 class IndexStaleError(RuntimeError):
@@ -60,7 +63,7 @@ class IndexStaleError(RuntimeError):
 
     The refusal is deliberately ASYMMETRIC. Every WRITE is refused under any
     drift, because a write is what mixes the regimes. A READ is refused only
-    when the EMBEDDER changed, because that is the one change under which the
+    when the EMBEDDER or its ENCODING CONTRACT changed, because then the
     stored vectors no longer live in the same space as the query's; a chunk
     size or frontmatter change leaves every row still meaningful, merely
     inconsistent with what a rebuild would produce, and refusing to answer
@@ -120,13 +123,18 @@ class Store:
         produced it — so the index records them once, in the marker, and
         reports a difference as drift."""
         chunker = config.get("chunker", {})
-        return {
+        fingerprint = {
             "embedder_model": config.get("embedder", {}).get("model", ""),
             "chunk_size": int(chunker.get("chunk_size", 256)),
             "overlap_ratio": float(chunker.get("overlap_ratio", 0.35)),
             "strip_frontmatter": bool(chunker.get("strip_frontmatter", False)),
             "contextual": bool(config.get("contextual", {}).get("enabled", False)),
         }
+        from mainframe.core.encoding import native_contract
+        contract = native_contract(config)
+        if contract:
+            fingerprint[ENCODING_FIELD] = contract
+        return fingerprint
 
     def reconfigure(self, tier_boost: dict, recency_weight: float, recency_halflife_days: float):
         self.tier_boost = tier_boost
@@ -137,7 +145,7 @@ class Store:
     # ---------- schema ----------
 
     def _schema(self) -> pa.Schema:
-        return pa.schema([
+        schema = pa.schema([
             pa.field("chunk_key", pa.string()),
             pa.field("doc_id", pa.string()),
             pa.field("doc_path", pa.string()),
@@ -156,6 +164,11 @@ class Store:
             pa.field("authored_at", pa.string()),
             pa.field("indexed_at", pa.string()),
         ])
+        if (self.fingerprint or {}).get(ENCODING_FIELD):
+            # Native identity belongs to the table that owns the vectors. Its
+            # loss must not turn a sidecar rewrite into silent compatibility.
+            schema = schema.with_metadata({_NATIVE_FINGERPRINT: json.dumps(self.fingerprint).encode('utf-8')})
+        return schema
 
     def _table_names(self):
         resp = self.db.list_tables()
@@ -170,6 +183,15 @@ class Store:
         return self.db_path.with_name(self.db_path.name + ".meta.json")
 
     def _read_marker(self) -> dict | None:
+        embedded = (self.table.schema.metadata or {}).get(_NATIVE_FINGERPRINT) if self.table is not None else None
+        if embedded is not None:
+            try:
+                fingerprint = json.loads(embedded)
+                if not isinstance(fingerprint, dict) or not isinstance(fingerprint.get(ENCODING_FIELD), dict):
+                    raise ValueError('native identity is incomplete')
+            except (ValueError, TypeError):
+                fingerprint = {ENCODING_FIELD: 'unreadable native identity'}
+            return {'format_version': FORMAT_VERSION, 'fingerprint': fingerprint}
         try:
             data = json.loads(self._marker_path().read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -189,14 +211,23 @@ class Store:
     def _note_drift(self, marker: dict | None):
         stored = (marker or {}).get("fingerprint") or {}
         if self.fingerprint is None:
+            if ENCODING_FIELD in stored:
+                self.config_drift = {ENCODING_FIELD: [stored[ENCODING_FIELD], None]}
             return                          # this caller did not ask (eval harness, offline tools)
         if not stored:
+            if ENCODING_FIELD in self.fingerprint:
+                self.config_drift = {ENCODING_FIELD: [None, self.fingerprint[ENCODING_FIELD]]}
+                return
             # Nothing was ever recorded for these rows (an index built before
             # the marker existed, or a damaged one): an unrecorded past cannot
             # be reported as drift, so the current settings become the baseline.
             self._write_marker()
             return
-        self.config_drift = {k: [stored.get(k), v] for k, v in self.fingerprint.items() if stored.get(k) != v}
+        fields = set(self.fingerprint)
+        if ENCODING_FIELD in stored:
+            fields.add(ENCODING_FIELD)  # A native -> legacy change must also refuse reads.
+        self.config_drift = {k: [stored.get(k), self.fingerprint.get(k)] for k in fields
+                             if stored.get(k) != self.fingerprint.get(k)}
         for field, (was, now) in self.config_drift.items():
             # The marker keeps the OLD values until a rebuild actually
             # re-creates the rows: it describes what produced them, not what
@@ -392,7 +423,7 @@ class Store:
         """Hybrid vector + FTS candidates, tier-boosted, stably ordered."""
         import pandas as pd
 
-        if EMBEDDER_FIELD in self.config_drift:
+        if {EMBEDDER_FIELD, ENCODING_FIELD}.intersection(self.config_drift):
             self.refuse_if_stale("search")
         tbl = self.table
         if tbl is None:

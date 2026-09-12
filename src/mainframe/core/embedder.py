@@ -21,7 +21,13 @@ _BNB_INT8_GRID_MAX = 65535
 
 
 class Embedder:
+    encoding: dict | None = None
+
     def __init__(self, config: dict):
+        from mainframe.core import encoding
+        self.encoding = encoding.native_contract(config)
+        if self.encoding:
+            encoding.require_native_runtime()
         cfg = config["embedder"]
         self.model_name = cfg["model"]
         self.batch_size = cfg.get("batch_size", 8)
@@ -50,13 +56,20 @@ class Embedder:
         # against that, not the value we tried to set.
         effective_seq = self.max_seq_length
         if not self._use_manual:
+            pin_error = None
             try:
                 self.model.max_seq_length = self.max_seq_length
             except Exception as e:
+                pin_error = str(e)
                 logger.warning(f"Could not pin model.max_seq_length: {e}")
             effective_seq = getattr(self.model, "max_seq_length", None) or self.max_seq_length
+            if self.encoding and (pin_error or effective_seq != self.max_seq_length):
+                self.model = None
+                gc.collect()
+                empty_cuda_cache()
+                raise ValueError('native model cannot enforce the recorded context limit')
         self._safe_batch = max(1, _BNB_INT8_GRID_MAX // max(1, effective_seq))
-        if self.batch_size > self._safe_batch:
+        if not self.encoding and self.batch_size > self._safe_batch:
             logger.info(
                 f"Capping embed batch_size {self.batch_size} -> {self._safe_batch} "
                 f"(max_seq_length={self.max_seq_length}, INT8 grid limit)"
@@ -107,9 +120,18 @@ class Embedder:
 
     def _load_fp(self, model_name, cache_dir, device):
         from sentence_transformers import SentenceTransformer
-        logger.info(f"Loading {model_name} (FP16 on {device})...")
+        kwargs = {'trust_remote_code': True}
+        if self.encoding:
+            from transformers import AutoConfig
+            native_config = AutoConfig.from_pretrained(
+                model_name, revision=self.encoding['revision'], cache_dir=str(cache_dir), trust_remote_code=False)
+            if (getattr(native_config, 'auto_map', None) or {}).get('AutoModel'):
+                raise ValueError('native custom model code requires a reviewed adapter; automatic architecture fallback is refused')
+            kwargs = {'revision': self.encoding['revision'], 'trust_remote_code': False,
+                      'model_kwargs': {'dtype': torch.bfloat16, 'attn_implementation': 'sdpa'}}
+        logger.info("Loading %s (%s on %s)...", model_name, 'native BF16' if self.encoding else 'default precision', device)
         self.model = SentenceTransformer(
-            model_name, cache_folder=str(cache_dir), device=device, trust_remote_code=True)
+            model_name, cache_folder=str(cache_dir), device=device, **kwargs)
         self.dimension = self.model.get_sentence_embedding_dimension()
 
     @staticmethod
@@ -123,8 +145,12 @@ class Embedder:
             torch.arange(batch_size, device=last_hidden_states.device), sequence_lengths]
 
     def embed(self, texts: list[str], batch_size: int | None = None) -> list[list[float]]:
+        if not texts:
+            return []
         # Clip even an explicit caller batch_size to the grid-safe cap.
-        bs = min(batch_size or self.batch_size, self._safe_batch)
+        bs = batch_size or self.batch_size
+        if not self.encoding:
+            bs = min(bs, self._safe_batch)
         try:
             return self._embed_at(texts, bs)
         except torch.cuda.OutOfMemoryError:
@@ -140,6 +166,10 @@ class Embedder:
         if self._use_manual:
             return self._embed_manual(texts, bs)
         with torch.inference_mode():
+            if self.encoding:
+                return self.model.encode_document(
+                    texts, batch_size=bs, show_progress_bar=False, normalize_embeddings=True,
+                    convert_to_tensor=True).float().cpu().tolist()
             embeddings = self.model.encode(texts, batch_size=bs, show_progress_bar=False, normalize_embeddings=True)
         return embeddings.tolist()
 
@@ -184,6 +214,12 @@ class Embedder:
     }
 
     def embed_query(self, query: str) -> list[float]:
+        if self.encoding:
+            prompt = self.encoding['query_prompt']
+            with torch.inference_mode():
+                return self.model.encode_query(
+                    [query], show_progress_bar=False, normalize_embeddings=True, convert_to_tensor=True,
+                    **({'prompt_name': prompt} if prompt else {})).float().cpu().tolist()[0]
         category = self._classify_query(query)
         prefix = self.CATEGORY_PREFIXES.get(category) or self.query_prefix
         if category == "general":
@@ -193,4 +229,7 @@ class Embedder:
 
     @property
     def info(self) -> dict:
-        return {"model": self.model_name, "dimension": self.dimension, "device": self.device}
+        info = {"model": self.model_name, "dimension": self.dimension, "device": self.device}
+        if self.encoding:
+            info['encoding'] = dict(self.encoding)
+        return info

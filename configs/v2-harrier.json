@@ -1,0 +1,27 @@
+{
+  "_name": "v2 Harrier native encoding trial",
+  "_notes": "Experimental opt-in profile; see docs/MODEL_COMPARISON.md for measured scope and the shared critical-passage miss. Requires the native extra. Set an explicit project scope before indexing; use separate state and retain the old configuration for rollback. Validate desktop interaction on your workload. Normal daemon inference is not paced by this preset.",
+  "paths": {
+    "mainframe_dir": "~/.claude/mainframe-harrier-preview",
+    "include_projects": ["example-project"]
+  },
+  "service": {"prewarm": false},
+  "embedder": {
+    "model": "microsoft/harrier-oss-v1-0.6b",
+    "encoding": "native",
+    "revision": "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
+    "query_prompt": "web_search_query",
+    "quantize": false,
+    "batch_size": 8,
+    "max_seq_length": 2048
+  },
+  "reranker": {
+    "model": "Qwen/Qwen3-Reranker-4B",
+    "enabled": true,
+    "quantize": true,
+    "heading_inject": true
+  },
+  "contextual": {"enabled": false},
+  "consolidator": {"enabled": false},
+  "nli": {"enabled": false}
+}
