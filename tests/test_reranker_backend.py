@@ -4,7 +4,6 @@ GPU eval harness."""
 
 from mainframe_mcp.reranker import (
     CATEGORY_INSTRUCTIONS,
-    _QWEN3_DOC_CHAR_CLAMP,
     _QWEN3_QUERY_CHAR_CLAMP,
     Reranker,
     detect_backend,
@@ -30,17 +29,16 @@ def test_qwen3_pair_text_format():
                    "<Doc>: The batch cap prevents it.")
 
 
-def test_qwen3_pair_text_clamps_pathological_docs():
-    huge = "x" * (_QWEN3_DOC_CHAR_CLAMP * 3)
+def test_qwen3_pair_text_leaves_document_for_token_budget():
+    huge = "x" * 9000
     out = qwen3_pair_text("q", huge, "i")
-    # clamped so tokenizer truncation can never eat the assistant suffix
-    assert len(out) < _QWEN3_DOC_CHAR_CLAMP + 100
+    assert out.endswith(huge)
 
 
 def test_qwen3_pair_text_clamps_pathological_query():
     huge_q = "w " * 4000
     out = qwen3_pair_text(huge_q, "doc", "i")
-    assert len(out) < _QWEN3_QUERY_CHAR_CLAMP + _QWEN3_DOC_CHAR_CLAMP
+    assert len(out) < _QWEN3_QUERY_CHAR_CLAMP + 100
 
 
 def test_category_instruction_resolution():
@@ -79,7 +77,13 @@ def test_score_qwen3_retries_per_item_on_oom():
     class FakeTokenizer:
         def __call__(self, batch, **kw):
             calls.append(len(batch))
-            return FakeInputs(input_ids=torch.zeros((len(batch), 4), dtype=torch.long))
+            return {"input_ids": [[0] * 4 for _ in batch]}
+
+        def encode(self, text, **kw):
+            return [0]
+
+        def pad(self, inputs, **kw):
+            return FakeInputs(input_ids=torch.tensor(inputs["input_ids"]))
 
     class FakeModel:
         device = "cpu"

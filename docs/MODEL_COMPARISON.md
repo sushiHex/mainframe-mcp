@@ -463,6 +463,12 @@ is claimed. See [PresentMon's capture documentation](https://github.com/GameTech
 
 ## Validation and decision
 
+The original model comparisons in this document use the character-clamped reranker.
+The subsequent [token-budget regression check](RERANKER_CONTEXT.md#measured-follow-up-2026-09-11)
+restores the hidden critical passage without changing indexes. It records
+first-place ranking tradeoffs separately; the original measurements and labels
+here are preserved.
+
 The integrated public checkout's GPU-free suite passed: **534 passed, 1 skipped**. The projection
 regression tests failed against both original backends, and the JSON-setting
 test failed against the original configuration parser before their fixes.
