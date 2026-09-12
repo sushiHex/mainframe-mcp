@@ -18,6 +18,11 @@ PresentMon tracing request, so visible presentation measurement remains pending;
 the live soak and interaction verdicts are recorded in the measured results.
 Keep model defaults and the live index unchanged during evaluation.
 
+Follow-up: the [shared token-budget fix](RERANKER_CONTEXT.md#measured-follow-up-2026-09-11)
+recovers the hidden passage and gives Harrier all five critical matches, with
+first-place ranking tradeoffs. The comparisons above retain their original
+reranker baseline; the challenge is now a known regression set.
+
 Delayed heartbeats pause further forwards until the permit is fresh, with waits
 recorded separately. No estimated-memory admission gates, allocation caps, or
 fixed trial deadlines are imposed.

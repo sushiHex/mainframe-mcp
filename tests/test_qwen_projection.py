@@ -25,7 +25,13 @@ def test_final_token_projection_preserves_scores_and_int8_batch_order(module):
         def __call__(self, texts, **kwargs):
             ids = [int(re.search(r"<Doc>: document-(\d+)", text)[1]) for text in texts]
             batches.append(ids)
-            return Inputs(input_ids=torch.tensor([[i, i] for i in ids]))
+            return {"input_ids": [[i, i] for i in ids]}
+
+        def encode(self, text, **kwargs):
+            return [0]
+
+        def pad(self, inputs, **kwargs):
+            return Inputs(input_ids=torch.tensor(inputs["input_ids"]))
 
     class Model:
         device = "cpu"

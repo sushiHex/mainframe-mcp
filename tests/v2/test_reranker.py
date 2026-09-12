@@ -10,10 +10,10 @@ def test_backend_detection():
     assert rr.detect_backend("Qwen/Qwen3-Reranker-4B", cfg_backend="cross-encoder") == "cross-encoder"
 
 
-def test_pair_text_clamps_and_uses_model_card_format():
+def test_pair_text_bounds_query_but_leaves_document_for_token_budget():
     t = rr.qwen3_pair_text("q" * 2000, "d" * 5000, "inst")
     assert t.startswith("<Instruct>: inst\n<Query>: ") and "<Doc>: " in t
-    assert t.count("q") == rr._QWEN3_QUERY_CHAR_CLAMP and t.count("d") == rr._QWEN3_DOC_CHAR_CLAMP
+    assert t.count("q") == rr._QWEN3_QUERY_CHAR_CLAMP and t.count("d") == 5000
 
 
 def test_category_machinery_is_gone():

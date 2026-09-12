@@ -69,8 +69,10 @@ model caches outside public Git.
   writes; incompatible embedding changes also block search until rebuilding.
 - Citation lines require a matching file hash and a verified passage.
   Ambiguous matches must never receive guessed source spans.
-- Preserve native reranker prompt tokens, truncation limits, and INT8 batch
-  order. Batch composition can affect quantized scores. Retrieval changes
+- Preserve native reranker prompt tokens, query/context bounds, and INT8 batch
+  order. The shared `mainframe_mcp.qwen` helper budgets documents in tokens and
+  reserves the scoring suffix; character counts are not context budgets.
+  Batch composition can affect quantized scores. Retrieval changes
   require evaluation, even when automated behavior tests pass.
 - Projected store reads must avoid loading vector columns. Read errors must
   not masquerade as an empty ledger or trigger accidental deletion.

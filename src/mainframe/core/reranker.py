@@ -20,6 +20,8 @@ import warnings
 import torch
 from sentence_transformers import CrossEncoder
 
+from mainframe_mcp.qwen import tokenize_with_suffix
+
 logger = logging.getLogger(__name__)
 
 # Native Qwen3-Reranker prompt scaffold (from the model card — do not reword;
@@ -33,13 +35,10 @@ _QWEN3_SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
 _QWEN3_DEFAULT_INSTRUCTION = (
     "Given a technical documentation search query, retrieve the passage that best answers it"
 )
-# Clamp each doc before assembly so tokenizer truncation can never eat the
-# suffix (the assistant tag the score is read at). 256-tok chunks are ~1.5K
-# chars; only pathological chunks hit this. DO NOT trim these for speed:
+# Keep the existing query bound. Documents use the available TOKEN budget:
+# preserved code blocks and long paragraphs can exceed 3,000 characters while
+# still fitting the context. tokenize_with_suffix reserves the scoring suffix.
 # Changes to these limits require a retrieval evaluation.
-_QWEN3_DOC_CHAR_CLAMP = 3000
-# The query gets the same treatment — unbounded, it could push the assembled
-# prompt past max_length and truncate away the assistant suffix.
 _QWEN3_QUERY_CHAR_CLAMP = 1000
 _QWEN3_MAX_LENGTH = 2048
 
@@ -60,7 +59,7 @@ def qwen3_pair_text(query: str, doc: str, instruction: str) -> str:
     """The <Instruct>/<Query>/<Doc> body the Qwen3 reranker scores (model-card
     format). Pure — unit-tested without the model."""
     return (f"<Instruct>: {instruction}\n<Query>: {query[:_QWEN3_QUERY_CHAR_CLAMP]}\n"
-            f"<Doc>: {doc[:_QWEN3_DOC_CHAR_CLAMP]}")
+            f"<Doc>: {doc}")
 
 
 class Reranker:
@@ -145,9 +144,8 @@ class Reranker:
                 _QWEN3_PREFIX + qwen3_pair_text(query, texts[j], instruction) + _QWEN3_SUFFIX
                 for j in idx
             ]
-            inputs = self.tokenizer(batch, padding=True, truncation=True,
-                                    max_length=_QWEN3_MAX_LENGTH,
-                                    return_tensors="pt").to(self.model.device)
+            inputs = tokenize_with_suffix(self.tokenizer, batch, _QWEN3_SUFFIX,
+                                          _QWEN3_MAX_LENGTH).to(self.model.device)
             with torch.inference_mode():
                 # Only the final token judges yes/no. Keep the full attention
                 # context, but avoid projecting every token into the vocabulary.

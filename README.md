@@ -18,8 +18,8 @@ Everything runs on your own GPU. Nothing leaves your machine at query time.
 - **Ops-hardened** — read-only search hot path, atomic manifest writes with crash recovery, index compaction + FTS refresh after ingest batches, poison-file-resilient syncs, path-traversal validation, and a layered secret-scrub denylist on every write path.
 - **Measured, not vibed** — an eval harness with a regression gate (`eval/evaluate.py --min-score`), an experiment-log discipline (`eval/results.template.md`), and a GPU-free test suite (fakes + real LanceDB) that runs in CI.
 
-Native Qwen reranking now projects only the final token into the vocabulary,
-preserving the full attention context and all 120 measured rankings while
+The final-token projection experiment preserved the full attention context
+and all 120 measured rankings while
 reducing the full Qwen stack's measured query-phase CUDA peak to **13.70 GiB**.
 Nemotron with that optimized reranker completed the same comparison at
 **8.20 GiB**: Mainframe passage matches stayed unchanged, while SciFact top-three
@@ -34,7 +34,7 @@ retained all 34 baseline top-three expected-passage matches and found three
 more, using **7.80 versus 14.33 GiB** peak CUDA allocation. That check used
 47 existing labels across 64 files; it is not an unseen-query evaluation.
 
-On 20 newly authored, source-grounded questions frozen before either run,
+In the original 20-question, source-grounded challenge frozen before either run,
 both models found the expected document for every query and the labeled passage
 for 19. Harrier lost no baseline passage. Both missed one critical passage at
 reranking; [the results](docs/MODEL_COMPARISON.md#fresh-passage-based-challenge)
@@ -53,6 +53,16 @@ interaction during searches. Displayed-frame timing remains unmeasured.
 Fresh questions can reuse a completed evaluation index when its corpus and
 encoding identity match. The [evaluation guide](eval/README.md) documents
 verification of older indexes through their original manifest.
+
+Native Qwen reranking now budgets documents in tokens, replacing the former
+3,000-character cutoff. Long paragraphs and preserved code blocks can use the
+existing 2,048-token context, with room reserved for the assistant scoring
+suffix. Ordinary prompt tokens, candidate order, and INT8 batches are preserved;
+scores can change in batches containing longer documents. Existing indexes and
+citations remain valid. See [context handling](docs/RERANKER_CONTEXT.md).
+For ordinary Harrier use, start with an explicit project scope and keep a
+[private question journal](docs/V2.md#everyday-harrier-evaluation) that distinguishes
+real user questions from scripted probes and known regression cases.
 
 ## Requirements
 
