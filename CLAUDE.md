@@ -15,8 +15,9 @@ repository is the development home. Read `AGENTS.md`, `CONTRIBUTING.md`, and
   at the other's index. v2 builds a new index on first startup.
 - v2 consolidation is not implemented. Its capture/receipt primitives do not
   imply a complete ambient consolidation loop.
-- Harrier 0.6B native BF16 is the v2 default, paired with the optimized Qwen3
-  4B INT8 reranker. Core dependencies include the measured native library pair.
+- Harrier 0.6B native BF16 is the v2 default, paired with Qwen3 Reranker 4B:
+  NF4 with BF16 compute on CUDA and BF16 otherwise. Core dependencies include
+  the measured native library pair.
   `mainframe-mcp` forwards stdio to the daemon; it does not start another stack.
 - Changed or missing native index identity blocks reads and writes. Rebuild
   offline instead of editing the fingerprint. Do not silently reuse Qwen vectors
@@ -61,7 +62,7 @@ model caches outside public Git.
 - `Models.invoke` owns loading, use, and release. Callers return results and
   must not retain model references. Recognized device faults get one reload
   and retry; failed loads back off.
-- Release partial primary-load allocations before the INT8 fallback. Windows
+- Release partial primary-load allocations before the quantized fallback. Windows
   error 1455 is host commit exhaustion; preserve its diagnostics and backoff,
   and never classify it as a CUDA-context fault that needs a model reload.
 - Health readers use metadata without importing or loading models. Keep
@@ -73,9 +74,12 @@ model caches outside public Git.
   writes; incompatible embedding changes also block search until rebuilding.
 - Citation lines require a matching file hash and a verified passage.
   Ambiguous matches must never receive guessed source spans.
-- Preserve native reranker prompt tokens, query/context bounds, and INT8 batch
-  order. The shared `mainframe_mcp.qwen` helper budgets documents in tokens and
+- Preserve native reranker prompt tokens, query/context bounds, NF4 settings,
+  and saved-order batches of eight. The shared `mainframe_mcp.qwen` helper
+  budgets documents in tokens and
   reserves the scoring suffix; character counts are not context budgets.
+  One-shot reranking projects only the final token and disables the unused
+  decoder cache. See [reranker measurements](docs/RERANKER_COMPARISON.md).
   Batch composition can affect quantized scores. Retrieval changes
   require evaluation, even when automated behavior tests pass.
 - Projected store reads must avoid loading vector columns. Read errors must

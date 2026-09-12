@@ -410,3 +410,26 @@ def test_state_reports_live_backoff_without_touching_the_factory(cfg):
     assert m.state()["embedder"]["retry_after_s"] == 15 and len(attempts) == 1
     clk["t"] += 30
     assert m.state()["embedder"]["retry_after_s"] == 0 and len(attempts) == 1   # state() never loads
+
+
+def test_state_snapshots_model_info_without_retaining_or_rereading_it(cfg):
+    from mainframe.core.models import Models
+
+    class Reranker:
+        calls = 0
+
+        @property
+        def info(self):
+            self.calls += 1
+            return {"precision": "nf4-bf16", "revision": "pinned", "nested": {"batch": 8}}
+
+    reranker = Reranker()
+    models = Models(cfg, embedder_factory=lambda c: object(), reranker_factory=lambda c: reranker)
+    models.invoke("reranker", lambda model: None)
+    assert reranker.calls == 1
+    state = models.state()["reranker"]
+    assert state["info"]["precision"] == "nf4-bf16" and reranker.calls == 1
+    state["info"]["nested"]["batch"] = 0
+    assert models.state()["reranker"]["info"]["nested"]["batch"] == 8
+    models.invalidate("reranker")
+    assert models.state()["reranker"]["info"] is None

@@ -2,10 +2,11 @@
 
 Measured on September 10–11, 2026.
 
-Harrier native BF16 with the optimized Qwen3 4B INT8 reranker is now the default
-on public main. Promotion accepts the [context follow-up's](RERANKER_CONTEXT.md)
-recorded first-place tradeoffs. The tables below retain their original baselines
-and experimental status at measurement time.
+Harrier native BF16 is the default embedder on public main. The later
+[reranker comparison](RERANKER_COMPARISON.md) selects Qwen3 Reranker 4B NF4 as
+the preferred shared-GPU configuration after its production scoring replay and
+installed synthetic daemon smoke passed. The tables below retain their
+historical INT8 reranker baselines and experimental status at measurement time.
 
 ## Scope and method
 
@@ -166,9 +167,10 @@ projection was rejected as a replacement for INT8. SciFact p50/p95 improved
 to 0.679/0.894 seconds, but MRR fell to 0.8150 and Mainframe document hit@1
 fell from 85% to 75%. Peak allocated/reserved memory was 4.315/4.902 GiB.
 Quantization and batch composition can affect retrieval; faster inference
-does not establish quality parity. The default remains INT8. v2 now accepts
-the already-supported `reranker.quantize` option in JSON as well as through
-`MAINFRAME_RERANKER_QUANTIZE`.
+does not establish quality parity. At the time of this measurement, the default
+remained INT8. The later [reranker comparison](RERANKER_COMPARISON.md) records
+the NF4 selection and its quality tradeoff. v2 accepts `reranker.quantize` in
+JSON as well as through `MAINFRAME_RERANKER_QUANTIZE`.
 
 ## Paced Nemotron embedding probe
 
@@ -488,13 +490,15 @@ PyTorch 2.14.0+cpu, Sentence Transformers 6.0.1, Transformers 5.17.0, and
 packaging 26.3. This checks installation/import compatibility; the GPU results
 above use the separately recorded trial versions.
 
-Harrier native BF16 and the optimized Qwen3 4B INT8 reranker are now the standard
-v2 stack. The token-budget follow-up recovers all five critical answers and all
-20 top-three passage matches on the known challenge. Promotion accepts the
-documented first-place tradeoffs; that reused challenge is no longer a fresh
-holdout. Voyage passes the aggregate public check but offers a smaller
-incremental memory saving. Neither Ettin nor FP16 met the strict
-no-observed-regression criterion across the reported retrieval metrics.
+Harrier native BF16 is now the standard v2 embedder. The token-budget follow-up
+recovers all five critical answers and all 20 top-three passage matches on the
+known challenge. Promotion accepts the documented first-place tradeoffs; that
+reused challenge is no longer a fresh holdout. Voyage passes the aggregate
+public check but offers a smaller incremental memory saving. These conclusions
+use the historical INT8 reranker. The later
+[reranker comparison](RERANKER_COMPARISON.md) selects Qwen 4B NF4 as a measured
+shared-GPU tradeoff after its production scoring replay and installed synthetic
+daemon smoke passed.
 
 The live synthetic daemon soak and normal daemon trial passed. The operator
 reported smooth interaction during the validation session; displayed-frame

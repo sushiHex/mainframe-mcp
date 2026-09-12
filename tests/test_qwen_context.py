@@ -79,8 +79,9 @@ def scorer(request):
     class Model:
         device = "cpu"
 
-        def __call__(self, input_ids, attention_mask, logits_to_keep):
-            seen.append({"input_ids": input_ids.clone(), "attention_mask": attention_mask.clone()})
+        def __call__(self, input_ids, attention_mask, logits_to_keep, use_cache=None):
+            seen.append({"input_ids": input_ids.clone(), "attention_mask": attention_mask.clone(),
+                         "use_cache": use_cache})
             logits = torch.zeros((len(input_ids), logits_to_keep, 2))
             logits[:, -1, 0] = (input_ids == vocabulary.index("ANSWER")).any(dim=1).float() * 5
             return SimpleNamespace(logits=logits)
@@ -120,11 +121,12 @@ def test_token_overflow_preserves_suffix_context_bound_and_left_padding(scorer):
     assert batch["attention_mask"][1].all()
 
 
-def test_ordinary_prompt_tokens_and_int8_batch_composition_are_unchanged(scorer):
+def test_ordinary_prompt_tokens_and_fixed_batch_order_are_unchanged(scorer):
     module, r, seen = scorer
     docs = ["routine " * i for i in range(1, 12)]
     r._score_qwen3("query", docs)
     assert [len(batch["input_ids"]) for batch in seen] == [8, 3]
+    assert all(batch["use_cache"] is False for batch in seen)
     for offset, batch in zip((0, 8), seen):
         prompts = [module._QWEN3_PREFIX + module.qwen3_pair_text("query", doc, r.instruction)
                    + module._QWEN3_SUFFIX for doc in docs[offset:offset + 8]]

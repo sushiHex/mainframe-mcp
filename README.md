@@ -71,7 +71,7 @@ mainframe status
 mainframe search "deployment checks and rollback steps" --detailed
 ```
 
-First use downloads missing model weights from Hugging Face and indexes the selected files. Initial indexing can take time; `status` reports model and index progress. File watching and periodic rescans keep subsequent changes in sync.
+First use downloads missing model revisions from Hugging Face and indexes the selected files. An older cached revision does not prevent an upgrade from downloading its pinned weights. Initial indexing can take time; `status` reports model and index progress. File watching and periodic rescans keep edits, renames, and deletions in sync.
 
 ## Connect your agent
 
@@ -148,12 +148,21 @@ Reranking reads up to 2,048 tokens per prompt. Longer passages are truncated, wi
 
 ## Models and hardware
 
-| Role | Default model | Precision |
-| --- | --- | --- |
-| Embedding | Microsoft Harrier OSS v1 0.6B | BF16, pinned native encoding |
-| Reranking | Qwen3 Reranker 4B | INT8 |
+| Role | Default model | Precision | Weight license |
+| --- | --- | --- | --- |
+| Embedding | [Microsoft Harrier OSS v1 0.6B](https://huggingface.co/microsoft/harrier-oss-v1-0.6b) | BF16, pinned native encoding | MIT |
+| Reranking | [Qwen3 Reranker 4B](https://huggingface.co/Qwen/Qwen3-Reranker-4B) | NF4 with BF16 compute on CUDA; BF16 otherwise | Apache-2.0 |
 
-Scoped measurements observed roughly **7–8 GiB peak CUDA allocation** for this stack. Allow additional headroom for reservation, larger inputs, and other GPU workloads. See [model comparisons](docs/MODEL_COMPARISON.md) and [reranker results](docs/RERANKER_CONTEXT.md) for methods and accepted ranking tradeoffs.
+NF4 is the selected shared-GPU configuration. In the isolated reranker
+comparison, loaded allocation fell from 4.113 GiB for the historical INT8
+control to 2.493 GiB for NF4. Its production scoring contract reproduced all
+3,740 scores exactly, and an installed two-document synthetic daemon smoke
+passed startup, search, mutation, restart, and cleanup checks. The memory saving
+comes with documented ranking tradeoffs; allow headroom for allocator
+reservation, larger inputs, and other GPU workloads. See
+[embedding comparisons](docs/MODEL_COMPARISON.md), the
+[reranker comparison](docs/RERANKER_COMPARISON.md), and
+[reranker context validation](docs/RERANKER_CONTEXT.md) for methods and limits.
 
 The daemon supports capture, indexing, and search. Consolidation, contradiction detection, and RAPTOR remain [legacy v1 features](docs/PREVIEW_RELEASE.md#capabilities). Changing embedding settings requires a matching index; follow the [offline rebuild procedure](docs/V2.md#index-ownership-and-recovery).
 

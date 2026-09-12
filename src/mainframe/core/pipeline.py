@@ -1,7 +1,9 @@
 """The index loop's work unit: paths → canonical de-dup →
-resolve lanes → prepare rows → ONE merge per batch of ≤ batch_cap files (and
-≤ batch_cap deletions) → optimize once → events. Vanished paths the ledger
-still holds are deleted. Thread-agnostic: the MutationQueue provides exclusion."""
+resolve lanes → prepare rows → ONE merge per batch of ≤ batch_cap prepared
+files and ≤ batch_cap preidentified deletions → optimize once → events. A
+prepare-time vanished file can add one deletion per file, so a merged batch is
+bounded by 2 × batch_cap deletions. Thread-agnostic: the MutationQueue provides
+exclusion."""
 
 import logging
 import time
@@ -9,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from mainframe.core.indexer import UNCHANGED, DocFailure, prepare_document
+from mainframe.core.indexer import UNCHANGED, VANISHED, DocFailure, prepare_document
 from mainframe.core.paths import canonical, doc_id
 
 logger = logging.getLogger(__name__)
@@ -148,11 +150,14 @@ class IndexPipeline:
     # ---- internals ----
 
     def _run(self, todo: list, deleted: list, kind: str, prune_skipped: bool = False) -> IndexRunResult:
-        """The shared batching loop for index()/rescan(): merge per ≤batch_cap
-        group of files and of deletions, optimize once at the end if anything
-        changed, emit index.missing when the chunk_key index still isn't
-        there. A mid-run upsert_batch exception leaves earlier batches already
-        committed; the in-memory ledger was updated only for the batches that
+        """The shared batching loop for index()/rescan(): merge each incoming
+        ≤batch_cap prepared-file group with its ≤batch_cap preidentified
+        deletions. Prepare-time vanished files can add at most one deletion per
+        prepared path, so one merge can contain up to 2 × batch_cap deletions.
+        Optimize once at the end if anything changed, emit index.missing when
+        the chunk_key index still isn't there. A mid-run upsert_batch exception
+        leaves earlier batches already committed; the in-memory ledger was
+        updated only for the batches that
         actually landed, so the next call picks up where it left off — the
         caller (Mainframe.submit) is responsible for requeuing any paths that
         never got attempted."""
@@ -198,11 +203,19 @@ class IndexPipeline:
     def _run_batch(self, chunk, deleted_paths, ledger, rep: IndexRunResult):
         failed_before = len(rep.failed)
         docs = []
+        deleted_paths = list(deleted_paths)
         ctx = self._ctx()
         for lf in chunk:
             out = self.models.invoke("embedder", lambda e, lf=lf: prepare_document(
                 lf, self.chunk_cfg, e, known_hash=ledger.get(lf.path), contextualizer=ctx))
-            if out is UNCHANGED:
+            if out is VANISHED:
+                self.empty_paths.discard(lf.path)
+                # A degraded ledger or unavailable root must never turn a
+                # transient absence into a deletion; retain the same prune
+                # guard used for deletions discovered before preparation.
+                if not rep.prune_skipped and not self.ledger_degraded and lf.path in ledger:
+                    deleted_paths.append(lf.path)
+            elif out is UNCHANGED:
                 rep.unchanged += 1
             elif isinstance(out, DocFailure):
                 rep.failed.append({"file": out.doc_path, "error": out.error})
@@ -218,6 +231,7 @@ class IndexPipeline:
                 if lf.path in ledger:
                     rep.emptied += 1
                     docs.append(out)
+        deleted_paths = sorted(set(deleted_paths))
         deleted_ids = [doc_id(p) for p in deleted_paths]
         upserted = 0
         if docs or deleted_ids:

@@ -43,8 +43,8 @@ DEFAULTS = {
         "revision": "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
         "query_prompt": "web_search_query",
     },
-    "reranker": {"model": "Qwen/Qwen3-Reranker-4B", "enabled": True,
-                 "heading_inject": True, "quantize": True},
+    "reranker": {"model": "Qwen/Qwen3-Reranker-4B", "revision": "22e683669bc0f0bd69640a1354a6d0aebcfeede5",
+                 "enabled": True, "heading_inject": True, "quantize": True},
     "consolidator": {"model": "Qwen/Qwen2.5-3B-Instruct", "enabled": False, "quantize": True,
                      "max_new_tokens": 4096},
     "nli": {"model": "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli", "enabled": False,
@@ -83,6 +83,11 @@ def deep_copy(d: dict) -> dict:
     return json.loads(json.dumps(d))
 
 
+def _reset_reranker_revision_for_model_change(current: dict, override: dict) -> None:
+    if override.get("model") not in (None, current.get("model")):
+        current["revision"] = None
+
+
 def _reset_contract_for_model_change(current: dict, override: dict) -> None:
     """Start a fresh encoding contract when a configuration layer changes models.
 
@@ -119,6 +124,9 @@ def _deep_merge(base: dict, override: dict, source: str = "", prefix: str = "") 
     if not prefix and isinstance(base.get("embedder"), dict) \
             and isinstance(override.get("embedder"), dict):
         _reset_contract_for_model_change(base["embedder"], override["embedder"])
+    if not prefix and isinstance(base.get("reranker"), dict) \
+            and isinstance(override.get("reranker"), dict):
+        _reset_reranker_revision_for_model_change(base["reranker"], override["reranker"])
     for key, val in override.items():
         path = f"{prefix}{key}"
         if source and key not in base and not key.startswith("_"):
@@ -185,6 +193,8 @@ def load_config(config_path: Path | None = None) -> dict:
             target = config.setdefault(section, {})
             if section == "embedder" and key == "model":
                 _reset_contract_for_model_change(target, {"model": cast_value})
+            if section == "reranker" and key == "model":
+                _reset_reranker_revision_for_model_change(target, {"model": cast_value})
             target[key] = cast_value
     for k, v in config.get("paths", {}).items():
         if isinstance(v, str):  # include_projects/exclude_projects are glob lists, not paths
@@ -197,31 +207,39 @@ def load_config(config_path: Path | None = None) -> dict:
     return config
 
 
-def _cached_repo_ids(cache_dirs: list) -> set:
+def _cached_repo_revisions(cache_dirs: list) -> dict[str, set[str]]:
+    """Cached repo IDs mapped to resolvable commit hashes, branches, and tags."""
     from huggingface_hub import scan_cache_dir
-    repos = set()
+    repos: dict[str, set[str]] = {}
     for d in cache_dirs:
         try:
             info = scan_cache_dir(d) if d else scan_cache_dir()
-            repos |= {r.repo_id for r in info.repos}
+            for repo in info.repos:
+                revisions = repos.setdefault(repo.repo_id, set())
+                for revision in repo.revisions:
+                    revisions.add(revision.commit_hash)
+                    revisions.update(revision.refs)
         except Exception:
             continue
     return repos
 
 
 def hf_offline_if_cached(config: dict) -> bool:
-    """Set HF_HUB_OFFLINE=1 when every ENABLED model is already cached, so a hub
+    """Set HF_HUB_OFFLINE=1 when every enabled model revision is cached, so a hub
     outage cannot hang a model load. Respects an explicit
     user setting; stays online when any model is missing."""
     if "HF_HUB_OFFLINE" in os.environ:
         return False
-    models = [config["embedder"]["model"]]
+    models = [config["embedder"]]
     for key in ("reranker", "nli", "consolidator"):
         section = config.get(key, {})
         if section.get("enabled", True):
-            models.append(section["model"])
-    cached = _cached_repo_ids([None, config["paths"].get("model_cache")])
-    if all(m in cached for m in models):
+            models.append(section)
+    cached = _cached_repo_revisions([None, config["paths"].get("model_cache")])
+    if all(section["model"] in cached
+           and (not section.get("revision")
+                or section["revision"] in cached[section["model"]])
+           for section in models):
         os.environ["HF_HUB_OFFLINE"] = "1"
         return True
     return False
