@@ -301,3 +301,92 @@ def test_rescan_skips_prune_when_root_is_missing(cfg, store, tmp_path):
     assert store.count_rows() == 1                            # an absent root must not wipe the index
     events = ev.recent(1, kind="index.rescan")
     assert events[0]["detail"]["prune_skipped"] is True
+
+
+def _delete_when_read(monkeypatch, target):
+    """Make the file disappear after the pipeline has resolved its lane."""
+    original = Path.read_text
+    target = canonical(target)
+
+    def read_then_delete(path, *args, **kwargs):
+        if canonical(path) == target:
+            path.unlink()
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_then_delete)
+
+
+def test_index_deletion_during_prepare_removes_an_indexed_document(cfg, store, tmp_path, monkeypatch):
+    """Exercise the resolve → read TOCTOU through IndexPipeline, not a fake result."""
+    path = write_md(Path(cfg["paths"]["repos_dir"]) / "p" / "docs" / "race.md", "# race\n\ncontent\n")
+    pipe = _pipe(cfg, store, tmp_path)
+    assert pipe.index([str(path)]).upserted_rows == 1
+
+    _delete_when_read(monkeypatch, path)
+    report = pipe.index([str(path)])
+
+    assert report.failed == [] and report.deleted_docs == 1
+    assert store.count_rows() == 0 and store.ledger() == {}
+
+
+def test_index_deletion_during_prepare_skips_an_unindexed_document(cfg, store, tmp_path, monkeypatch):
+    path = write_md(Path(cfg["paths"]["repos_dir"]) / "p" / "docs" / "race.md", "# race\n\ncontent\n")
+    pipe = _pipe(cfg, store, tmp_path)
+
+    _delete_when_read(monkeypatch, path)
+    report = pipe.index([str(path)])
+
+    assert report.failed == [] and report.deleted_docs == 0 and report.upserted_rows == 0
+    assert store.count_rows() == 0
+
+
+def test_index_keeps_an_indexed_document_on_a_real_read_failure(cfg, store, tmp_path, monkeypatch):
+    path = write_md(Path(cfg["paths"]["repos_dir"]) / "p" / "docs" / "locked.md", "# locked\n\ncontent\n")
+    pipe = _pipe(cfg, store, tmp_path)
+    assert pipe.index([str(path)]).upserted_rows == 1
+    original = Path.read_text
+
+    def denied(read_path, *args, **kwargs):
+        if canonical(read_path) == canonical(path):
+            raise PermissionError("synthetic denied read")
+        return original(read_path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    report = pipe.index([str(path)])
+
+    assert report.deleted_docs == 0 and len(report.failed) == 1
+    assert "synthetic denied read" in report.failed[0]["error"]
+    assert store.count_rows() == 1
+
+
+def test_vanished_prepare_does_not_prune_when_ledger_is_degraded(cfg, store, tmp_path, monkeypatch):
+    path = write_md(Path(cfg["paths"]["repos_dir"]) / "p" / "docs" / "race.md", "# race\n\ncontent\n")
+    assert _pipe(cfg, store, tmp_path).index([str(path)]).upserted_rows == 1
+    pipe = _pipe(cfg, store, tmp_path)  # no cached ledger: make its scan fail
+    monkeypatch.setattr(store, "_scan", _raises_scan)
+    _delete_when_read(monkeypatch, path)
+
+    report = pipe.index([str(path)])
+
+    assert report.prune_skipped is True and report.deleted_docs == 0
+    assert store.count_rows() == 1
+
+
+def test_vanished_prepare_does_not_prune_when_root_disappears_after_enumeration(cfg, store, tmp_path, monkeypatch):
+    """A populated ledger must still honor rescan's root-unavailable guard."""
+    repos = Path(cfg["paths"]["repos_dir"])
+    path = write_md(repos / "p" / "docs" / "race.md", "# race\n\ncontent\n")
+    assert _pipe(cfg, store, tmp_path).index([str(path)]).upserted_rows == 1
+    pipe = _pipe(cfg, store, tmp_path)
+    original = pipe.lanes.all_files
+
+    def enumerate_then_remove_root():
+        files = original()
+        shutil.rmtree(repos)
+        return files
+
+    monkeypatch.setattr(pipe.lanes, "all_files", enumerate_then_remove_root)
+    report = pipe.rescan()
+
+    assert report.prune_skipped is True and report.deleted_docs == 0
+    assert store.count_rows() == 1

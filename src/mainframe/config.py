@@ -207,31 +207,39 @@ def load_config(config_path: Path | None = None) -> dict:
     return config
 
 
-def _cached_repo_ids(cache_dirs: list) -> set:
+def _cached_repo_revisions(cache_dirs: list) -> dict[str, set[str]]:
+    """Cached repo IDs mapped to resolvable commit hashes, branches, and tags."""
     from huggingface_hub import scan_cache_dir
-    repos = set()
+    repos: dict[str, set[str]] = {}
     for d in cache_dirs:
         try:
             info = scan_cache_dir(d) if d else scan_cache_dir()
-            repos |= {r.repo_id for r in info.repos}
+            for repo in info.repos:
+                revisions = repos.setdefault(repo.repo_id, set())
+                for revision in repo.revisions:
+                    revisions.add(revision.commit_hash)
+                    revisions.update(revision.refs)
         except Exception:
             continue
     return repos
 
 
 def hf_offline_if_cached(config: dict) -> bool:
-    """Set HF_HUB_OFFLINE=1 when every ENABLED model is already cached, so a hub
+    """Set HF_HUB_OFFLINE=1 when every enabled model revision is cached, so a hub
     outage cannot hang a model load. Respects an explicit
     user setting; stays online when any model is missing."""
     if "HF_HUB_OFFLINE" in os.environ:
         return False
-    models = [config["embedder"]["model"]]
+    models = [config["embedder"]]
     for key in ("reranker", "nli", "consolidator"):
         section = config.get(key, {})
         if section.get("enabled", True):
-            models.append(section["model"])
-    cached = _cached_repo_ids([None, config["paths"].get("model_cache")])
-    if all(m in cached for m in models):
+            models.append(section)
+    cached = _cached_repo_revisions([None, config["paths"].get("model_cache")])
+    if all(section["model"] in cached
+           and (not section.get("revision")
+                or section["revision"] in cached[section["model"]])
+           for section in models):
         os.environ["HF_HUB_OFFLINE"] = "1"
         return True
     return False

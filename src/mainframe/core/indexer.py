@@ -2,9 +2,10 @@
 
 Pure with respect to the store: the caller batches DocRows into
 `Store.upsert_batch`. A file that fails ANY stage returns DocFailure and the
-caller leaves it out of the batch (its previous rows survive) — with ONE
-exception, stated at the embed: a device-level failure is not a fact about this
-document, so it propagates instead of being reported as one."""
+caller leaves it out of the batch (its previous rows survive). A file that
+vanishes before its first read is a distinct outcome so the pipeline can remove
+old rows; a device-level embed failure also propagates rather than being
+reported as a document failure."""
 
 import logging
 from dataclasses import dataclass
@@ -41,13 +42,24 @@ class _Unchanged:
         return "UNCHANGED"
 
 
+class _Vanished:
+    def __repr__(self):
+        return "VANISHED"
+
+
 UNCHANGED = _Unchanged()
+VANISHED = _Vanished()
 
 
 def prepare_document(lf: LaneFile, chunk_cfg: dict, embedder, known_hash: str | None = None,
                      contextualizer=None, now: str | None = None):
     try:
         text = Path(lf.path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        # Lane resolution and reading cannot be atomic: a watcher can queue a
+        # path just before it is deleted. This is a deletion, not a malformed
+        # document; the pipeline removes any old rows in the same batch.
+        return VANISHED
     except (OSError, UnicodeDecodeError) as e:
         return DocFailure(lf.path, f"read: {e}")
     fh = file_hash(text)

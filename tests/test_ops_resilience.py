@@ -59,8 +59,8 @@ def _cfg(model_cache="/tmp/models"):
 
 def test_hf_offline_set_when_all_models_cached(monkeypatch):
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
-    monkeypatch.setattr(config_mod, "_cached_repo_ids",
-                        lambda dirs: {"m/emb", "m/rr", "m/nli", "m/cons"})
+    monkeypatch.setattr(config_mod, "_cached_repo_revisions",
+                        lambda dirs: {m: set() for m in ("m/emb", "m/rr", "m/nli", "m/cons")})
     assert config_mod.hf_offline_if_cached(_cfg()) is True
     assert os.environ["HF_HUB_OFFLINE"] == "1"
     monkeypatch.delenv("HF_HUB_OFFLINE")
@@ -70,15 +70,16 @@ def test_hf_stays_online_when_any_model_missing(monkeypatch):
     """A missing model (first run, model swap) must keep hub access — going
     offline would turn the lazy consolidator/NLI load into a confusing crash."""
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
-    monkeypatch.setattr(config_mod, "_cached_repo_ids", lambda dirs: {"m/emb", "m/rr"})
+    monkeypatch.setattr(config_mod, "_cached_repo_revisions",
+                        lambda dirs: {"m/emb": set(), "m/rr": set()})
     assert config_mod.hf_offline_if_cached(_cfg()) is False
     assert "HF_HUB_OFFLINE" not in os.environ
 
 
 def test_hf_offline_respects_explicit_user_setting(monkeypatch):
     monkeypatch.setenv("HF_HUB_OFFLINE", "0")  # user explicitly wants online
-    monkeypatch.setattr(config_mod, "_cached_repo_ids",
-                        lambda dirs: {"m/emb", "m/rr", "m/nli", "m/cons"})
+    monkeypatch.setattr(config_mod, "_cached_repo_revisions",
+                        lambda dirs: {m: set() for m in ("m/emb", "m/rr", "m/nli", "m/cons")})
     assert config_mod.hf_offline_if_cached(_cfg()) is False
     assert os.environ["HF_HUB_OFFLINE"] == "0"  # untouched
 
@@ -88,7 +89,8 @@ def test_hf_disabled_models_not_required(monkeypatch):
     cfg = _cfg()
     cfg["consolidator"]["enabled"] = False
     cfg["nli"]["enabled"] = False
-    monkeypatch.setattr(config_mod, "_cached_repo_ids", lambda dirs: {"m/emb", "m/rr"})
+    monkeypatch.setattr(config_mod, "_cached_repo_revisions",
+                        lambda dirs: {"m/emb": set(), "m/rr": set()})
     assert config_mod.hf_offline_if_cached(cfg) is True
     monkeypatch.delenv("HF_HUB_OFFLINE")
 

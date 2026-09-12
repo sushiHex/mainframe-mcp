@@ -1,4 +1,4 @@
-from mainframe.core.indexer import UNCHANGED, DocFailure, LaneFile, prepare_document
+from mainframe.core.indexer import UNCHANGED, VANISHED, DocFailure, LaneFile, prepare_document
 from mainframe.core.paths import canonical, doc_id, chunk_key
 from mainframe.core.store import DocRows
 from v2.helpers import write_md
@@ -59,10 +59,9 @@ def test_empty_file_yields_no_rows(tmp_path, fake_embedder):
     assert isinstance(d, DocRows) and d.rows == []
 
 
-def test_unreadable_file_is_a_failure(tmp_path, fake_embedder):
+def test_missing_file_is_vanished(tmp_path, fake_embedder):
     lf = LaneFile(canonical(tmp_path / "missing.md"), "knowledge", "x")
-    d = prepare_document(lf, CHUNK, fake_embedder)
-    assert isinstance(d, DocFailure) and "missing.md" in d.doc_path
+    assert prepare_document(lf, CHUNK, fake_embedder) is VANISHED
 
 
 def test_capture_lane_is_scrubbed_and_typed_session(tmp_path, fake_embedder):

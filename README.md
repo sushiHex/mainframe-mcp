@@ -71,7 +71,7 @@ mainframe status
 mainframe search "deployment checks and rollback steps" --detailed
 ```
 
-First use downloads missing model weights from Hugging Face and indexes the selected files. Initial indexing can take time; `status` reports model and index progress. File watching and periodic rescans keep subsequent changes in sync.
+First use downloads missing model revisions from Hugging Face and indexes the selected files. An older cached revision does not prevent an upgrade from downloading its pinned weights. Initial indexing can take time; `status` reports model and index progress. File watching and periodic rescans keep edits, renames, and deletions in sync.
 
 ## Connect your agent
 
