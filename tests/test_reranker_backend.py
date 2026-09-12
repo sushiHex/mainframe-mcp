@@ -75,6 +75,9 @@ def test_score_qwen3_retries_per_item_on_oom():
             return self
 
     class FakeTokenizer:
+        def get_vocab(self):
+            return {"x": 0}
+
         def __call__(self, batch, **kw):
             calls.append(len(batch))
             return {"input_ids": [[0] * 4 for _ in batch]}
