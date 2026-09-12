@@ -9,13 +9,13 @@ import torch
 
 
 @pytest.mark.parametrize("module", ["mainframe_mcp.reranker", "mainframe.core.reranker"])
-def test_final_token_projection_preserves_scores_and_int8_batch_order(module):
+def test_final_token_projection_preserves_scores_and_fixed_batch_order(module):
     cls = importlib.import_module(module).Reranker
     reranker = cls.__new__(cls)
     reranker.instruction = "Find relevant evidence"
     reranker._quantized = True
     reranker._yes_id, reranker._no_id = 0, 1
-    batches, projected = [], []
+    batches, projected, cache_settings = [], [], []
 
     class Inputs(dict):
         def to(self, device):
@@ -39,7 +39,7 @@ def test_final_token_projection_preserves_scores_and_int8_batch_order(module):
     class Model:
         device = "cpu"
 
-        def __call__(self, input_ids, logits_to_keep=0):
+        def __call__(self, input_ids, logits_to_keep=0, use_cache=None):
             # This fake implements the causal-LM output contract: retaining
             # fewer positions changes allocation, not the final-token answer.
             n, length = input_ids.shape
@@ -49,6 +49,7 @@ def test_final_token_projection_preserves_scores_and_int8_batch_order(module):
             # test token uses the preceding document token as its context.
             logits[:, -1, 0] = input_ids[:, -2].float() / 4
             projected.append(length)
+            cache_settings.append(use_cache)
             return SimpleNamespace(logits=logits)
 
     reranker.tokenizer = Tokenizer()
@@ -57,3 +58,4 @@ def test_final_token_projection_preserves_scores_and_int8_batch_order(module):
     assert scores == pytest.approx(torch.sigmoid(torch.arange(11).float() / 4).tolist())
     assert batches == [list(range(8)), [8, 9, 10]]
     assert projected == [1, 1]
+    assert cache_settings == [False, False]

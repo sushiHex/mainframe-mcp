@@ -41,6 +41,7 @@ _QWEN3_DEFAULT_INSTRUCTION = (
 # Changes to these limits require a retrieval evaluation.
 _QWEN3_QUERY_CHAR_CLAMP = 1000
 _QWEN3_MAX_LENGTH = 2048
+_QWEN3_BATCH_SIZE = 8
 
 
 def detect_backend(model_name: str, cfg_backend: str | None = None) -> str:
@@ -56,8 +57,10 @@ def detect_backend(model_name: str, cfg_backend: str | None = None) -> str:
 
 
 def qwen3_pair_text(query: str, doc: str, instruction: str) -> str:
-    """The <Instruct>/<Query>/<Doc> body the Qwen3 reranker scores (model-card
-    format). Pure — unit-tested without the model."""
+    """Mainframe's measured <Instruct>/<Query>/<Doc> scoring body.
+
+    Qwen's published template uses <Document>; changing this requires evaluation.
+    """
     return (f"<Instruct>: {instruction}\n<Query>: {query[:_QWEN3_QUERY_CHAR_CLAMP]}\n"
             f"<Doc>: {doc}")
 
@@ -78,7 +81,8 @@ class Reranker:
         self.device = device
         self._backend = detect_backend(self.model_name, cfg.get("backend"))
         self.instruction = cfg.get("instruction", _QWEN3_DEFAULT_INSTRUCTION)
-        self.quantize = cfg.get("quantize", True)  # qwen3-logit only: INT8 vs fp16
+        self.revision = cfg.get("revision")
+        self.quantize = cfg.get("quantize", True)  # qwen3-logit only: NF4 on CUDA vs BF16
 
         logger.info(f"Loading reranker {self.model_name} ({self._backend}) on {device}...")
         old_stdout, old_stderr = sys.stdout, sys.stderr
@@ -93,7 +97,8 @@ class Reranker:
                 # mxbai-rerank is missing score.weight — PyTorch randomly inits it.
                 # Fix seed so the init is reproducible across process loads.
                 torch.manual_seed(42)
-                self.model = CrossEncoder(self.model_name, device=device, trust_remote_code=True)
+                self.model = CrossEncoder(self.model_name, device=device, trust_remote_code=True,
+                                          revision=self.revision)
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
@@ -101,42 +106,39 @@ class Reranker:
         logger.info("Reranker loaded.")
 
     def _load_qwen3(self, device: str):
-        """Native Qwen3-Reranker: a causal LM scored via yes/no logits.
-
-        `reranker.quantize` (default true) picks INT8 (~4.5GB for the 4B —
-        VRAM-lean but bitsandbytes decomposition costs 2-3x LATENCY on Ampere)
-        vs fp16 (~8GB, fastest). fp16 also lifts the INT8 kernel grid limit,
-        so the whole candidate pool scores in one forward pass."""
+        """Load the measured Qwen contract: NF4 on CUDA, BF16 otherwise."""
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
+        identity = {"trust_remote_code": True}
+        if self.revision:
+            identity["revision"] = self.revision
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.model_name, padding_side="left", trust_remote_code=True)
-        kwargs = {"trust_remote_code": True, "torch_dtype": torch.float16, "device_map": device}
-        self._quantized = self.quantize and device == "cuda"
-        if self._quantized:
+            self.model_name, padding_side="left", **identity)
+        kwargs = {**identity, "dtype": torch.bfloat16, "attn_implementation": "sdpa",
+                  "device_map": device}
+        self._nf4 = self.quantize and device == "cuda"
+        if self._nf4:
             from transformers import BitsAndBytesConfig
-            kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
-            kwargs["device_map"] = "auto"
+            kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True, bnb_4bit_compute_dtype=torch.bfloat16)
+            kwargs["device_map"] = "cuda"
         self.model = AutoModelForCausalLM.from_pretrained(self.model_name, **kwargs)
+        if self._nf4 and not getattr(self.model, "is_loaded_in_4bit", False):
+            raise RuntimeError("Qwen NF4 load did not produce a 4-bit model")
+        self.model.eval()
+        self._precision = "nf4-bf16" if self._nf4 else "bf16"
         self._yes_id = self.tokenizer.convert_tokens_to_ids("yes")
         self._no_id = self.tokenizer.convert_tokens_to_ids("no")
 
     def _score_qwen3(self, query: str, texts: list[str]) -> list[float]:
-        """Score = P('yes') at the last position, softmaxed over {yes, no}.
+        """Score Qwen yes/no logits in fixed, saved batches of eight.
 
-        INT8: batch 8 (bitsandbytes grid: batch*seq < 65535) in INPUT ORDER —
-        LLM.int8's per-batch outlier decomposition makes scores batch-
-        composition-dependent. Preserve this order; changes require a fresh
-        retrieval evaluation. fp16 gets length-sorted batches
-        (similar-length rows share padding) purely for speed.
-
-        A CUDA OOM mid-batch degrades to item-at-a-time scoring (parity with
-        the embedder's fallback) instead of killing the search."""
+        A CUDA OOM mid-batch degrades to item-at-a-time scoring instead of
+        killing the search."""
         instruction = self.instruction
-        quantized = getattr(self, "_quantized", True)
-        step = 8 if quantized else 32
-        order = (list(range(len(texts))) if quantized
-                 else sorted(range(len(texts)), key=lambda i: len(texts[i]), reverse=True))
+        step = _QWEN3_BATCH_SIZE
+        order = list(range(len(texts)))
         scores = [0.0] * len(texts)
 
         def _forward(idx: list[int]) -> None:
@@ -148,8 +150,11 @@ class Reranker:
                                           _QWEN3_MAX_LENGTH).to(self.model.device)
             with torch.inference_mode():
                 # Only the final token judges yes/no. Keep the full attention
-                # context, but avoid projecting every token into the vocabulary.
-                logits = self.model(**inputs, logits_to_keep=1).logits[:, -1, :]
+                # context, but avoid projecting every token into the vocabulary
+                # or retaining a cache that this one-shot score never reuses.
+                logits = self.model(
+                    **inputs, logits_to_keep=1, use_cache=False
+                ).logits[:, -1, :]
             yes_no = torch.stack([logits[:, self._yes_id], logits[:, self._no_id]], dim=1)
             probs = torch.softmax(yes_no.float(), dim=1)[:, 0].cpu().tolist()
             for j, p in zip(idx, probs):
@@ -174,7 +179,10 @@ class Reranker:
         return {
             "model": self.model_name,
             "backend": getattr(self, "_backend", "disabled" if not self.enabled else "?"),
-            "quantized": getattr(self, "_quantized", None),
+            "revision": getattr(self, "revision", None),
+            "precision": getattr(self, "_precision", None),
+            "batch_size": (_QWEN3_BATCH_SIZE if getattr(self, "_backend", None)
+                           == "qwen3-logit" else None),
             "enabled": self.enabled,
         }
 

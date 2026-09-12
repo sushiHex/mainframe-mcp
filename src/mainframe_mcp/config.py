@@ -32,9 +32,11 @@ DEFAULTS = {
     # MAINFRAME_RERANKER_MODEL=BAAI/bge-reranker-v2-m3.
     "reranker": {
         "model": "Qwen/Qwen3-Reranker-4B",
+        "revision": "22e683669bc0f0bd69640a1354a6d0aebcfeede5",
         "enabled": True,
         "top_k": 3,
         "heading_inject": True,
+        "quantize": True,
     },
 
     # NLI contradiction detection
@@ -197,6 +199,8 @@ def load_config(config_path: Path | None = None) -> dict:
     for env_key, path in env_overrides.items():
         val = os.environ.get(env_key)
         if val is not None:
+            if path == ("reranker", "model"):
+                _reset_reranker_revision_for_model_change(config["reranker"], {"model": val})
             if len(path) == 3:
                 section, key, cast = path
                 config[section][key] = cast(val)
@@ -269,8 +273,15 @@ def _deep_copy(d: dict) -> dict:
     return json.loads(json.dumps(d))
 
 
+def _reset_reranker_revision_for_model_change(current: dict, override: dict) -> None:
+    if override.get("model") not in (None, current.get("model")):
+        current["revision"] = None
+
+
 def _deep_merge(base: dict, override: dict):
     """Merge override into base, recursively."""
+    if isinstance(base.get("reranker"), dict) and isinstance(override.get("reranker"), dict):
+        _reset_reranker_revision_for_model_change(base["reranker"], override["reranker"])
     for key, val in override.items():
         if key in base and isinstance(base[key], dict) and isinstance(val, dict):
             _deep_merge(base[key], val)

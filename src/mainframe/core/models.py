@@ -4,6 +4,7 @@ One lock serializes loading, use, and release. Health readers see immutable
 metadata snapshots without acquiring that lock or retaining model objects.
 Device faults get one reload and retry; failed loads back off."""
 
+import copy
 import gc
 import logging
 import threading
@@ -24,13 +25,14 @@ class _ModelState:
     error: str | None = None
     retry_at: float | None = None
     guidance: str | None = None
+    info: dict | None = None
 
     def retry_in(self, now: float) -> float:
         return max(0.0, self.retry_at - now) if self.retry_at is not None else 0.0
 
     def as_dict(self, now: float) -> dict:
         return {"name": self.name, "state": self.state, "error": self.error, "guidance": self.guidance,
-                "retry_after_s": int(self.retry_in(now))}
+                "retry_after_s": int(self.retry_in(now)), "info": copy.deepcopy(self.info)}
 
 
 def _default_embedder(config):
@@ -57,10 +59,10 @@ class Models:
         self._state = {r: _ModelState(config.get(r, {}).get("model", "")) for r in ROLES}
         self.retry_seconds = float(config.get("models", {}).get("retry_minutes", 15)) * 60
 
-    def _set_state(self, role: str, state: str, *, error=None, retry_at=None, guidance=None):
+    def _set_state(self, role: str, state: str, *, error=None, retry_at=None, guidance=None, info=None):
         # Publish one complete snapshot. Readers never combine fields from
         # different transitions, and the retry deadline is stored only here.
-        self._state[role] = _ModelState(self._state[role].name, state, error, retry_at, guidance)
+        self._state[role] = _ModelState(self._state[role].name, state, error, retry_at, guidance, info)
 
     def _emit(self, kind: str, **detail):
         if self.events is not None:
@@ -91,7 +93,12 @@ class Models:
                 logger.warning("%s", guidance)
             raise
         self._objects[role] = obj
-        self._set_state(role, "loaded")
+        try:
+            model_info = getattr(obj, "info", None)
+            info = copy.deepcopy(model_info) if isinstance(model_info, dict) else None
+        except Exception:
+            info = None
+        self._set_state(role, "loaded", info=info)
         self._emit("model.loaded", role=role, name=self._state[role].name)
         return obj
 

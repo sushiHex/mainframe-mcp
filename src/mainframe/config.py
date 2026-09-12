@@ -43,8 +43,8 @@ DEFAULTS = {
         "revision": "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
         "query_prompt": "web_search_query",
     },
-    "reranker": {"model": "Qwen/Qwen3-Reranker-4B", "enabled": True,
-                 "heading_inject": True, "quantize": True},
+    "reranker": {"model": "Qwen/Qwen3-Reranker-4B", "revision": "22e683669bc0f0bd69640a1354a6d0aebcfeede5",
+                 "enabled": True, "heading_inject": True, "quantize": True},
     "consolidator": {"model": "Qwen/Qwen2.5-3B-Instruct", "enabled": False, "quantize": True,
                      "max_new_tokens": 4096},
     "nli": {"model": "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli", "enabled": False,
@@ -83,6 +83,11 @@ def deep_copy(d: dict) -> dict:
     return json.loads(json.dumps(d))
 
 
+def _reset_reranker_revision_for_model_change(current: dict, override: dict) -> None:
+    if override.get("model") not in (None, current.get("model")):
+        current["revision"] = None
+
+
 def _reset_contract_for_model_change(current: dict, override: dict) -> None:
     """Start a fresh encoding contract when a configuration layer changes models.
 
@@ -119,6 +124,9 @@ def _deep_merge(base: dict, override: dict, source: str = "", prefix: str = "") 
     if not prefix and isinstance(base.get("embedder"), dict) \
             and isinstance(override.get("embedder"), dict):
         _reset_contract_for_model_change(base["embedder"], override["embedder"])
+    if not prefix and isinstance(base.get("reranker"), dict) \
+            and isinstance(override.get("reranker"), dict):
+        _reset_reranker_revision_for_model_change(base["reranker"], override["reranker"])
     for key, val in override.items():
         path = f"{prefix}{key}"
         if source and key not in base and not key.startswith("_"):
@@ -185,6 +193,8 @@ def load_config(config_path: Path | None = None) -> dict:
             target = config.setdefault(section, {})
             if section == "embedder" and key == "model":
                 _reset_contract_for_model_change(target, {"model": cast_value})
+            if section == "reranker" and key == "model":
+                _reset_reranker_revision_for_model_change(target, {"model": cast_value})
             target[key] = cast_value
     for k, v in config.get("paths", {}).items():
         if isinstance(v, str):  # include_projects/exclude_projects are glob lists, not paths

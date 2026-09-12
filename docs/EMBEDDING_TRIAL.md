@@ -2,7 +2,11 @@
 
 Harrier has been promoted to the default stack on public main after the
 [context correction](RERANKER_CONTEXT.md). The plan and results below are the
-historical adoption record; keeping Qwen as the default is no longer required.
+historical embedding-adoption record; keeping the former Qwen embedder is no
+longer required. All Qwen 4B INT8 reranker references below describe the fixed
+historical control. The later [reranker comparison](RERANKER_COMPARISON.md)
+selects Qwen 4B NF4 as the preferred shared-GPU configuration after its
+production scoring replay and installed synthetic daemon smoke passed.
 
 Prepared September 11, 2026. **Status at original comparison: Nemotron completed the optimized, paced
 120-query comparison; Harrier and Voyage also completed it with lower memory
@@ -43,9 +47,10 @@ smaller allocation peak came with slightly higher reservation and a first-place
 relevance loss that Harrier avoided. Both preserve aggregate public hit rates.
 Published benchmark scores alone cannot establish a winner on this corpus.
 
-Use the optimized Qwen3 Reranker 4B INT8 throughout the embedding comparison.
+The completed embedding comparison used Qwen3 Reranker 4B INT8 throughout.
 Changing the reranker, output dimension, quantization, and embedder together
-would obscure which change helped. A smaller reranker can be a later experiment.
+would have obscured which change helped. Rerankers were evaluated separately
+after this comparison.
 
 ## Candidates and footprint evidence
 

@@ -1,5 +1,5 @@
 {
-  "_name": "Harrier BF16 with Qwen3 4B INT8 reranking",
+  "_name": "Harrier BF16 with Qwen3 4B NF4 reranking",
   "_notes": "Standard v2 stack; the old GPU profiles now use the measured Harrier contract. Choose explicit project scope before starting. See docs/RERANKER_CONTEXT.md for measured quality and memory tradeoffs.",
   "embedder": {
     "model": "microsoft/harrier-oss-v1-0.6b",
@@ -13,6 +13,7 @@
   },
   "reranker": {
     "model": "Qwen/Qwen3-Reranker-4B",
+    "revision": "22e683669bc0f0bd69640a1354a6d0aebcfeede5",
     "enabled": true,
     "quantize": true,
     "heading_inject": true

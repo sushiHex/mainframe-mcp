@@ -18,8 +18,16 @@ The answer was present in both embedding models' candidate pools.
   the bounded pre-suffix prompt to the remaining token budget.
 - For overflow, retain the leading tokens that fit and reserve the complete
   assistant suffix. The score must come from the assistant response position.
-- Apply left padding afterward. Keep INT8 batches of eight in candidate order
-  and retain item-at-a-time retry on a real CUDA out-of-memory error.
+- Apply left padding afterward. Keep saved-order batches of eight for both the
+  selected NF4 path and BF16 fallback, and retain item-at-a-time retry on a
+  real CUDA out-of-memory error.
+
+The production scaffold labels the document with `<Doc>`. The pinned
+Qwen3 Reranker 0.6B and 4B model cards and chat templates use `<Document>`. A
+separately preregistered 187-query comparison changed only this marker. It
+improved some aggregate counts for Qwen 0.6B but retained a true root-cause
+mechanism loss. The selected Qwen 4B configuration keeps the measured `<Doc>`
+prompt. See the [reranker comparison](RERANKER_COMPARISON.md).
 
 This does not expand the context or introduce sliding windows, extra model
 calls, new chunks, or index migrations. Token-dense documents can still exceed
@@ -32,7 +40,7 @@ candidates sharing a batch with an expanded document.
 GPU-free tests exercise both production scoring paths with a deterministic local
 tokenizer. They cover late evidence in oversized paragraphs and fenced blocks,
 suffix preservation on overflow, left padding, unchanged ordinary token IDs,
-the original INT8 batch composition, and pre-tokenization bounding for a huge
+the historical INT8 batch composition, and pre-tokenization bounding for a huge
 single prompt. The late-evidence regression failed against both original
 backends before the fix.
 
@@ -111,3 +119,22 @@ The supervisor accepted this run's completion report. The operator described
 the validation session as smooth; displayed-frame timing was not measured.
 Two earlier user questions were recorded with historical provenance, separately
 from scripted probes. They are not new independent evaluation questions.
+
+## KV-cache probe
+
+A later 23-query probe disabled the Qwen reranker's decoder cache and included
+the largest batches from the comparison pool. Its worker and supervisor both
+completed. All **460 raw scores, full rankings, and metrics** matched the cached
+control exactly. The probe reached **5.701 GiB allocated / 7.016 GiB reserved**,
+while the separate full 187-query cached control reached **7.951 / 9.283 GiB**.
+This was a targeted subset, not a matched full-run memory experiment, so it does
+not establish the full-run memory saving. Paired active time was **75.610 seconds
+without cache** and **73.569 seconds with cache**; no speed improvement is
+claimed.
+
+The later [reranker comparison](RERANKER_COMPARISON.md) selects Qwen 4B NF4 as
+the preferred shared-GPU configuration. The selection keeps the same pinned
+weights and `<Doc>` prompt, uses BF16 compute and disables the cache. Its
+production scoring contract reproduced all 3,740 scores and 187 full rankings
+exactly. An installed two-document synthetic daemon smoke also passed startup,
+search, mutation, restart, status-contract, and cleanup checks.
