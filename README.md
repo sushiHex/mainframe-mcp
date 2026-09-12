@@ -136,15 +136,11 @@ The [agent query guide](docs/MAINFRAME_QUERY.md) has exact request examples, res
 
 ## How it works
 
-```mermaid
-flowchart LR
-    A[Markdown and captures] --> B[Watch and index]
-    B --> C[Local index]
-    D[Agent or terminal] --> E[Search and rerank]
-    C --> E
-    E --> F[Passages with citations]
-    F --> D
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/architecture.svg">
+  <img src="docs/architecture.svg" alt="One shared Mainframe daemon indexes project Markdown and saved captures. Harrier embeddings and keyword search find candidates; Qwen reranks them and returns passages with source citations to your agent or terminal." width="1120">
+</picture>
 
 Harrier embeds documents and queries. Keyword retrieval supplies exact-term matches alongside semantic candidates; Qwen reranks the combined results. Citations are checked against the source revision. Models load on demand and are shared across clients.
 
