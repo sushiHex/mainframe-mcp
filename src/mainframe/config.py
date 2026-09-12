@@ -83,6 +83,21 @@ def deep_copy(d: dict) -> dict:
     return json.loads(json.dumps(d))
 
 
+def _reset_contract_for_model_change(current: dict, override: dict) -> None:
+    """Start a fresh encoding contract when a configuration layer changes models.
+
+    A model-only override predates native encoding and therefore means legacy
+    Sentence Transformers behavior. An explicit native selection may replace
+    these neutral values in the same layer; missing required fields are then
+    rejected by `native_contract` instead of leaking from the previous model.
+    """
+    model = override.get("model")
+    if model is None or model == current.get("model"):
+        return
+    current.update({"encoding": override.get("encoding", "legacy"),
+                    "revision": None, "query_prompt": None})
+
+
 # v1 (`mainframe_mcp`) is still installed and reads the SAME
 # `~/.claude/mainframe/config.json` and the same `configs/` presets, so a live
 # config legitimately carries keys v2 does not own. These are not typos, and
@@ -101,6 +116,9 @@ def _deep_merge(base: dict, override: dict, source: str = "", prefix: str = "") 
     underscore marks a comment (`_name`, `_vram` in the presets) and is allowed
     anywhere. Presets pass no `source` — they are repo-shipped, not hand-typed,
     and deliberately shared with v1."""
+    if not prefix and isinstance(base.get("embedder"), dict) \
+            and isinstance(override.get("embedder"), dict):
+        _reset_contract_for_model_change(base["embedder"], override["embedder"])
     for key, val in override.items():
         path = f"{prefix}{key}"
         if source and key not in base and not key.startswith("_"):
@@ -163,7 +181,11 @@ def load_config(config_path: Path | None = None) -> dict:
     for env_key, (section, key, cast) in _ENV_OVERRIDES.items():
         val = os.environ.get(env_key)
         if val is not None:
-            config.setdefault(section, {})[key] = cast(val)
+            cast_value = cast(val)
+            target = config.setdefault(section, {})
+            if section == "embedder" and key == "model":
+                _reset_contract_for_model_change(target, {"model": cast_value})
+            target[key] = cast_value
     for k, v in config.get("paths", {}).items():
         if isinstance(v, str):  # include_projects/exclude_projects are glob lists, not paths
             config["paths"][k] = str(Path(v).expanduser())

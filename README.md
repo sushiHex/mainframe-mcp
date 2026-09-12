@@ -155,6 +155,8 @@ Scoped measurements observed roughly **7–8 GiB peak CUDA allocation** for this
 
 The daemon supports capture, indexing, and search. Consolidation, contradiction detection, and RAPTOR remain [legacy v1 features](docs/PREVIEW_RELEASE.md#capabilities). Changing embedding settings requires a matching index; follow the [offline rebuild procedure](docs/V2.md#index-ownership-and-recovery).
 
+A model-only embedding override uses legacy Sentence Transformers encoding. To select another native embedder, configure its model, encoding, pinned revision, query prompt, and quantization together; see [model configuration](docs/V2.md#configure-and-start).
+
 ## Configuration and privacy
 
 `MAINFRAME_CONFIG` selects a different JSON configuration file. Set it for both daemon and clients, and restart after editing configuration. The [configuration example](config.example.json) shows common settings.
