@@ -8,6 +8,54 @@ import torch
 from tokenizers import Tokenizer, models, pre_tokenizers
 from transformers import PreTrainedTokenizerFast
 
+from mainframe_mcp.qwen import tokenize_with_suffix
+
+
+class RecordingByteTokenizer:
+    """A byte-level tokenizer double with a deliberately wide vocab token."""
+
+    def __init__(self):
+        self.calls = []
+        self.get_vocab_calls = 0
+
+    def get_vocab(self):
+        self.get_vocab_calls += 1
+        return {"x" * 16: 0, "S": 1}
+
+    def encode(self, text, add_special_tokens=False):
+        return [1] if text == "S" else [0] * len(text)
+
+    def __call__(self, prompts, **kwargs):
+        self.calls.append((list(prompts), kwargs))
+        limit = kwargs.get("max_length", 1_000_000)
+        return {"input_ids": [[0] * min(len(prompt), limit) for prompt in prompts]}
+
+    def pad(self, rows, **kwargs):
+        width = max(map(len, rows["input_ids"]))
+        ids = [([0] * (width - len(row))) + row for row in rows["input_ids"]]
+        mask = [([0] * (width - len(row))) + ([1] * len(row)) for row in rows["input_ids"]]
+        return {"input_ids": torch.tensor(ids), "attention_mask": torch.tensor(mask)}
+
+
+def test_huge_prompt_is_bounded_before_tokenization_and_keeps_suffix():
+    tokenizer = RecordingByteTokenizer()
+    out = tokenize_with_suffix(tokenizer, ["x" * 100_000 + "S"], "S", max_length=8)
+
+    prompts, kwargs = tokenizer.calls[0]
+    assert kwargs["truncation"] is True
+    assert kwargs["max_length"] == 7
+    assert len(prompts[0]) <= 7 * 16
+    assert out["input_ids"].tolist() == [[0] * 7 + [1]]
+
+
+def test_vocab_width_is_cached_on_the_resident_tokenizer():
+    tokenizer = RecordingByteTokenizer()
+
+    tokenize_with_suffix(tokenizer, ["xS"], "S", max_length=8)
+    tokenize_with_suffix(tokenizer, ["xS"], "S", max_length=8)
+
+    assert tokenizer.get_vocab_calls == 1
+
 
 @pytest.fixture(params=["mainframe_mcp.reranker", "mainframe.core.reranker"])
 def scorer(request):

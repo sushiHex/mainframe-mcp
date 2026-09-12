@@ -144,6 +144,8 @@ The [agent query guide](docs/MAINFRAME_QUERY.md) has exact request examples, res
 
 Harrier embeds documents and queries. Keyword retrieval supplies exact-term matches alongside semantic candidates; Qwen reranks the combined results. Citations are checked against the source revision. Models load on demand and are shared across clients.
 
+Reranking reads up to 2,048 tokens per prompt. Longer passages are truncated, with oversized inputs bounded before tokenization; see the [context limits and validation](docs/RERANKER_CONTEXT.md).
+
 ## Models and hardware
 
 | Role | Default model | Precision |

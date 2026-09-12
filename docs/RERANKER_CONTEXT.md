@@ -10,7 +10,12 @@ The answer was present in both embedding models' candidate pools.
 
 - Keep the existing prompt scaffold, 1,000-character query bound, and
   2,048-token maximum context.
-- Tokenize complete prompts. Prompts that fit retain their exact token IDs.
+- Before tokenization, cap only an impossible-to-fit prompt at the remaining
+  token budget times the widest spelling in the loaded Qwen byte-level BPE
+  vocabulary. This is a tokenizer-derived safety bound, not a fixed character
+  cutoff: every prompt that can fit remains untouched.
+- Prompts that fit retain their exact token IDs. The tokenizer then truncates
+  the bounded pre-suffix prompt to the remaining token budget.
 - For overflow, retain the leading tokens that fit and reserve the complete
   assistant suffix. The score must come from the assistant response position.
 - Apply left padding afterward. Keep INT8 batches of eight in candidate order
@@ -18,17 +23,27 @@ The answer was present in both embedding models' candidate pools.
 
 This does not expand the context or introduce sliding windows, extra model
 calls, new chunks, or index migrations. Token-dense documents can still exceed
-the context; their tail is omitted. Larger inputs within the existing bound
-can increase attention work and memory use. Quantized scores can change for
-other candidates sharing a batch with an expanded document.
+the context; their tail is omitted. A pathological unsplittable chunk cannot
+make tokenizer input grow without bound. Quantized scores can change for other
+candidates sharing a batch with an expanded document.
 
 ## Regression evidence
 
 GPU-free tests exercise both production scoring paths with a deterministic local
 tokenizer. They cover late evidence in oversized paragraphs and fenced blocks,
 suffix preservation on overflow, left padding, unchanged ordinary token IDs,
-and the original INT8 batch composition. The late-evidence regression failed
-against both original backends before the fix.
+the original INT8 batch composition, and pre-tokenization bounding for a huge
+single prompt. The late-evidence regression failed against both original
+backends before the fix.
+
+The bounded-tokenization follow-up was checked on the same frozen candidate
+pools using the cached tokenizer, without loading model weights. All **7,480
+prompts across 1,122 batches** retained identical token IDs and attention masks,
+including 41 long fitting prompts and four over-context prompts. A synthetic
+million-character prompt verified the input bound and complete scoring suffix;
+a separate regression verifies that each tokenizer's vocabulary is scanned
+only once. This preserves measured inputs; no new quality or latency gain is
+claimed.
 
 Live comparisons retain the original question labels and source snapshots.
 The previous fresh challenge is now a known regression set; it must not be
@@ -85,7 +100,7 @@ and metrics without rewriting the original report or claiming that supervisor
 check passed. The runtime regression suite passed **542 tests, with 1 skipped**.
 Raw sources, queries, and reports remain outside Git. These measurements
 preceded Harrier default promotion; the accepted ranking tradeoffs remain
-recorded here. See the [current default stack](../README.md#default-model-stack).
+recorded here. See the [current default stack](../README.md#models-and-hardware).
 
 The installed Harrier wheel also passed an unpaced daemon check across two
 explicitly configured projects: 18 documents, 303 chunks, authenticated searches,

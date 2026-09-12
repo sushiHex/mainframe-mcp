@@ -22,6 +22,9 @@ def test_final_token_projection_preserves_scores_and_int8_batch_order(module):
             return self
 
     class Tokenizer:
+        def get_vocab(self):
+            return {"x": 0}
+
         def __call__(self, texts, **kwargs):
             ids = [int(re.search(r"<Doc>: document-(\d+)", text)[1]) for text in texts]
             batches.append(ids)
@@ -42,7 +45,9 @@ def test_final_token_projection_preserves_scores_and_int8_batch_order(module):
             n, length = input_ids.shape
             length = logits_to_keep or length
             logits = torch.zeros((n, length, 2))
-            logits[:, -1, 0] = input_ids[:, -1].float() / 4
+            # The fixed assistant suffix is the scored final position; this
+            # test token uses the preceding document token as its context.
+            logits[:, -1, 0] = input_ids[:, -2].float() / 4
             projected.append(length)
             return SimpleNamespace(logits=logits)
 
