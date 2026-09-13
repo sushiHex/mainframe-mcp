@@ -276,10 +276,13 @@ def test_classify_passage_lost_in_both_branches():
 
 
 def _full_order_entry(doc_path, chunk_index, rank=1, expected=True, text_match=False,
-                      content_sha256="c0ffee0000000000"):
+                      content_sha256="c0ffee0000000000", pool_rank=None):
+    # pool_rank defaults to `rank` -- every pre-Round-5 test built full_order
+    # lists in ascending rank order already, so this default reproduces
+    # their intended pool order without touching every call site.
     return {"rank": rank, "doc_path": doc_path, "chunk_index": chunk_index,
             "rerank_score": 0.5, "expected": expected, "text_match": text_match,
-            "content_sha256": content_sha256}
+            "content_sha256": content_sha256, "pool_rank": pool_rank if pool_rank is not None else rank}
 
 
 # ---------- Round 3, Rule 1: attribution requires the SAME CANDIDATE SET,
@@ -570,6 +573,27 @@ def test_build_detail_record_hashes_text_when_content_hash_missing():
     assert record["full_order"][0]["content_sha256"] == expected
 
 
+def test_build_detail_record_pool_rank_is_the_pre_rerank_pool_position():
+    """Round 5, Rule 1: pool_rank is orig_idx + 1 -- the position the
+    reranker's INPUT (the pool BEFORE reranking) held each candidate at,
+    independent of where reranking later placed it."""
+    ev = _load("eval_evaluate_r5_pool_rank", "eval/evaluate.py")
+    raw_results = [{"doc_path": "c:/r/p/docs/a.md", "chunk_index": 0, "heading": "", "text": "alpha"},
+                   {"doc_path": "c:/r/p/docs/b.md", "chunk_index": 0, "heading": "", "text": "beta"}]
+    reranked = [(1, 0.9), (0, 0.5)]      # reranker promoted pool position 2 (b.md) to rank 1
+    judged = ev.judge_query(raw_results, reranked, "a.md", "")
+
+    record = ev.build_detail_record(0, {"query": "q", "expected_file": "a.md"}, raw_results,
+                                    reranked, judged, has_pool=True, full_reranked=reranked)
+
+    top_by_doc = {e["doc_path"]: e for e in record["top"]}
+    assert top_by_doc["c:/r/p/docs/b.md"]["rank"] == 1 and top_by_doc["c:/r/p/docs/b.md"]["pool_rank"] == 2
+    assert top_by_doc["c:/r/p/docs/a.md"]["rank"] == 2 and top_by_doc["c:/r/p/docs/a.md"]["pool_rank"] == 1
+    full_by_doc = {e["doc_path"]: e for e in record["full_order"]}
+    assert full_by_doc["c:/r/p/docs/a.md"]["pool_rank"] == 1
+    assert full_by_doc["c:/r/p/docs/b.md"]["pool_rank"] == 2
+
+
 def test_diff_records_treats_same_path_and_chunk_but_different_content_as_pool_differs():
     """Round 4, Rule 1: (doc_path, chunk_index) alone survives a doc
     edit + re-index -- the reranker saw DIFFERENT text even though the
@@ -629,6 +653,117 @@ def test_classify_escalates_to_full_rank_when_found_rank_ties():
 
     assert dd.classify(base, other) == "RERANKER"
     assert dd.classify(other, base) == "RECOVERED"
+
+
+# ---------- Round 5: unify identity/movement/query-equality into ONE
+# function each, instead of duplicating the logic at each call site ----------
+
+def test_pool_identity_sorts_by_pool_rank_not_list_order():
+    """pool_identity() must key off pool_rank (the reranker's INPUT order),
+    not the order full_order entries happen to be listed in the JSON."""
+    dd = _load("eval_details_diff_r5_rule1_sort", "eval/details_diff.py")
+
+    record_a = {"full_order": [_full_order_entry("x.md", 0, pool_rank=2),
+                               _full_order_entry("y.md", 1, pool_rank=1)]}
+    record_b = {"full_order": [_full_order_entry("y.md", 1, pool_rank=1),
+                               _full_order_entry("x.md", 0, pool_rank=2)]}
+    # Same entries, same pool_rank values, listed in a different order in
+    # the array -> pool_identity must agree (it sorts).
+    assert dd.pool_identity(record_a) == dd.pool_identity(record_b)
+
+    record_c = {"full_order": [_full_order_entry("x.md", 0, pool_rank=1),
+                               _full_order_entry("y.md", 1, pool_rank=2)]}
+    # Same SET as record_a, but pool_rank values swapped -> a genuinely
+    # different pool order, not just a different list order.
+    assert dd.pool_identity(record_a) != dd.pool_identity(record_c)
+    assert set(dd.pool_identity(record_a)) == set(dd.pool_identity(record_c))
+
+
+def test_pool_identity_none_when_any_field_missing():
+    dd = _load("eval_details_diff_r5_rule1_none", "eval/details_diff.py")
+    assert dd.pool_identity({"full_order": None}) is None
+    no_pool_rank = {"full_order": [{"doc_path": "a.md", "chunk_index": 0, "content_sha256": "h"}]}
+    assert dd.pool_identity(no_pool_rank) is None
+    no_content = {"full_order": [{"doc_path": "a.md", "chunk_index": 0, "pool_rank": 1}]}
+    assert dd.pool_identity(no_content) is None
+
+
+def test_diff_records_treats_pool_order_swap_as_order_differs():
+    """Round 5, Rule 1: the reranker sorts stably, so equal scores inherit
+    the PRE-rerank input order -- two runs with the same candidate set in a
+    different pool order are not the same pool. Must get a factual label
+    and a reason distinct from a genuine set difference."""
+    dd = _load("eval_details_diff_r5_rule1_order", "eval/details_diff.py")
+    base_full_order = [_full_order_entry("a.md", 0, pool_rank=1),
+                       _full_order_entry("b.md", 1, rank=2, pool_rank=2)]
+    other_full_order = [_full_order_entry("a.md", 0, pool_rank=2),      # same set...
+                        _full_order_entry("b.md", 1, rank=2, pool_rank=1)]  # ...swapped pool order
+    common_pool = {"size": 2, "expected_in_pool": True, "expected_best_pool_rank": 1,
+                   "expected_text_in_pool": True, "expected_text_pool_rank": 1}
+    base_q = [{"index": 0, "expected_file": "a.md", "found_rank": 1, "text_match_at_1": True,
+               "expected_full_rank": 1, "expected_text_full_rank": 1,
+               "pool": common_pool, "full_order": base_full_order}]
+    other_q = [{"index": 0, "expected_file": "a.md", "found_rank": 2, "text_match_at_1": False,
+                "expected_full_rank": 2, "expected_text_full_rank": 2,
+                "pool": common_pool, "full_order": other_full_order}]
+
+    rows = dd.diff_records(base_q, other_q, params_match=True)
+    assert len(rows) == 1
+    assert rows[0]["pool_identity"] == "order_differs"
+    assert rows[0]["reason"] == "pool: order differs"
+    assert rows[0]["class"] != "RERANKER"          # factual label only
+
+
+def test_rank_movement_reports_window_full_and_text_full_deltas():
+    dd = _load("eval_details_diff_r5_rule2_movement", "eval/details_diff.py")
+    worse = {"found_rank": 1, "expected_full_rank": 1, "expected_text_full_rank": 1}
+    better_side = {"found_rank": 2, "expected_full_rank": 2, "expected_text_full_rank": 2}
+    assert dd.rank_movement(worse, better_side) == (1, 1, 1)     # other is worse on all three
+    assert dd.rank_movement(better_side, worse) == (-1, -1, -1)  # other is better on all three
+    assert dd.rank_movement(worse, dict(worse)) == (0, 0, 0)
+
+
+def test_classify_cross_falls_back_to_full_rank_on_window_tie():
+    """Round 5, Rule 2: classify_cross must use the SAME cascading
+    window -> full rank fallback as classify() -- previously only the
+    attributing path escalated to expected_full_rank on a found_rank tie."""
+    dd = _load("eval_details_diff_r5_rule2_cross", "eval/details_diff.py")
+    common_pool = {"expected_in_pool": True}
+    base = {"found_rank": None, "expected_full_rank": 4, "pool": common_pool}
+    other = {"found_rank": None, "expected_full_rank": 20, "pool": common_pool}
+
+    assert dd.classify_cross(base, other) == "RANK_WORSE"
+    assert dd.classify_cross(other, base) == "RANK_BETTER"
+
+
+def test_same_query_names_the_first_differing_field():
+    dd = _load("eval_details_diff_r5_rule3_field", "eval/details_diff.py")
+    base = {"query": "q0", "expected_file": "a.md", "expected_text_contains": "x"}
+    other = {"query": "q0", "expected_file": "b.md", "expected_text_contains": "x"}
+
+    same, field = dd.same_query(base, other)
+    assert same is False
+    assert field == "expected_file"
+
+    same_true, field_none = dd.same_query(base, dict(base))
+    assert same_true is True and field_none is None
+
+
+def test_compare_raises_naming_field_when_query_matches_but_expected_file_differs():
+    """Round 5, Rule 3: the hashless fallback used to compare only `query`
+    text -- two records that ask the same question but score against a
+    different expected_file must also be refused, with the differing field
+    named."""
+    dd = _load("eval_details_diff_r5_rule3_compare", "eval/details_diff.py")
+    base_details = {"cell": {"models": {"embedder": "e"}, "mode": "live"}, "queries": [
+        {"index": 0, "query": "q0", "expected_file": "a.md", "expected_text_contains": "x"}]}
+    other_details = {"cell": {"models": {"embedder": "e"}, "mode": "live"}, "queries": [
+        {"index": 0, "query": "q0", "expected_file": "b.md", "expected_text_contains": "x"}]}
+    with pytest.raises(ValueError) as exc_info:
+        dd.compare(base_details, other_details)
+    msg = str(exc_info.value)
+    assert "expected_file" in msg
+    assert "0" in msg
 
 
 # ---------- 4. --details writer round-trips ----------

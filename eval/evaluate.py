@@ -248,7 +248,11 @@ def build_detail_record(index: int, tq: dict, raw_results: list, reranked: list,
     `preview` field (keeps the file small at full-pool size). Every `top`/
     `full_order` entry also carries `content_sha256` (see `_content_sha256`)
     so details_diff can tell "same candidate" from "same doc_path/
-    chunk_index but the document changed underneath it"."""
+    chunk_index but the document changed underneath it", and `pool_rank`
+    (`orig_idx + 1`, the position the reranker's INPUT — the pre-rerank
+    pool — held it at) so details_diff can tell "same candidates" from
+    "same candidates, different pool order" (Reranker.rerank() sorts
+    stably, so equal scores inherit that input order)."""
     expected_file = tq["expected_file"]
     expected_text = tq.get("expected_text_contains", "")
     top = []
@@ -265,6 +269,7 @@ def build_detail_record(index: int, tq: dict, raw_results: list, reranked: list,
             "expected": matches_expected(doc_path, expected_file),
             "text_match": expected_text.lower() in text.lower(),
             "content_sha256": _content_sha256(r),
+            "pool_rank": orig_idx + 1,
             "preview": text[:200],
         })
 
@@ -280,6 +285,7 @@ def build_detail_record(index: int, tq: dict, raw_results: list, reranked: list,
                 "rank": rank,
                 "doc_path": doc_path,
                 "chunk_index": r.get("chunk_index"),
+                "pool_rank": orig_idx + 1,
                 "rerank_score": round(float(score), 4),
                 "expected": matches_expected(doc_path, expected_file),
                 "text_match": expected_text.lower() in text.lower(),
