@@ -3,12 +3,13 @@
 **2.0.0a2** ships Harrier 0.6B native (1024-dim) and Qwen3-Reranker-0.6B.
 Install current source or the audited wheel for this behavior.
 
-**Breaking change:** indexes built under 2.0.0a1 must be rebuilt offline because
-the embedding dimension changed (Qwen3-Embedding-8B 4096-dim → Harrier 1024-dim).
-Run `mainframe down` to stop the daemon, then `mainframe rebuild` with that
-daemon's configuration to rebuild the index with new embeddings. The dimension
-mismatch is caught by the fingerprint check (`IndexStaleError`); silent corruption
-is prevented by refusing writes and degraded search on dimension drift.
+**Breaking change:** an index built under 2.0.0a1 must be rebuilt offline,
+because the default embedder changed (Qwen3-Embedding-8B, 4096-dim, to Harrier,
+1024-dim) and its stored vectors no longer share a space with a2's queries. The
+index marker records the embedder that built it, so a2 opening an a1 index
+refuses both searches and writes (`IndexStaleError`, naming the changed setting
+and the remedy) until the rebuild: run `mainframe down`, then `mainframe rebuild`.
+Nothing is converted in place.
 
 **2.0.0a1 (historical)** shipped the original v1 server and opt-in v2 daemon
 with Qwen3-Embedding-8B (4096-dim) + Qwen3-Reranker-4B. The tagged artifact
@@ -31,8 +32,11 @@ v2 excludes captures from search unless sessions are requested. See the
 
 ## Install an audited artifact
 
-Download the wheel and `SHA256SUMS` from the [preview release](https://github.com/sushiHex/mainframe-mcp/releases/tag/v2.0.0a2).
-Verify the wheel hash against that manifest before installation:
+Download the wheel and `SHA256SUMS` from the [releases page](https://github.com/sushiHex/mainframe-mcp/releases)
+for the version you intend to install: `v2.0.0a1` is the Qwen build; `v2.0.0a2`
+is built from this `main` by the maintainer release checks below, and until it
+is published, install from source. Verify the wheel hash against that manifest
+before installation:
 
 ```powershell
 Get-FileHash ./mainframe_mcp-2.0.0a2-py3-none-any.whl -Algorithm SHA256
