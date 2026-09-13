@@ -44,7 +44,10 @@ DEFAULTS = {
         "query_prompt": "web_search_query",
     },
     "reranker": {"model": "Qwen/Qwen3-Reranker-0.6B", "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
-                 "enabled": True, "heading_inject": True, "quantize": False},
+                 "enabled": True, "heading_inject": True, "quantize": False,
+                 # None = the model's built-in default instruction; a string
+                 # replaces it for every query.
+                 "instruction": None},
     "consolidator": {"model": "Qwen/Qwen2.5-3B-Instruct", "enabled": False, "quantize": True,
                      "max_new_tokens": 4096},
     "nli": {"model": "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli", "enabled": False,
