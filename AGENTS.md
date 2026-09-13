@@ -13,7 +13,7 @@ The public `sushiHex/mainframe-mcp` repository is the primary home for code, iss
 - `python -m pip install -e ".[test]"`: install editable packages and test dependencies.
 - `python -m pytest tests/ -q`: run the complete GPU-free suite.
 - `python -m pytest tests/test_secrets.py -q`: run focused secret-scrubbing tests.
-- `python -u -m mainframe_mcp.server`: start the local stdio server.
+- `mainframe serve`: start the current v2 daemon (see `docs/V2.md`); `python -u -m mainframe_mcp.server` starts the legacy v1 stdio server only (see `docs/PREVIEW_RELEASE.md`).
 - `python -m pip wheel . --no-deps -w dist`: build a distribution wheel.
 
 ## Style and Testing
