@@ -50,6 +50,13 @@ CANDIDATE_POOL = None       # vector+FTS pool floor fed to the reranker. None ->
 CANDIDATE_DUMP = None       # None, or a dict populated by --dump-candidates
                             # (query -> [[doc_path, chunk_index], ...] over the
                             # raw candidate pool) — the determinism gate.
+DETAILS_DUMP = None         # None, or a list populated by --details: one
+                            # judgement record per query (see
+                            # build_detail_record) — pool membership, reranked
+                            # rank, and the top-k rows the reranker returned,
+                            # so a regression can be pinned on the embedder's
+                            # pool or the reranker's ordering instead of just
+                            # moving an aggregate.
 
 EVAL_DIR = Path(__file__).parent
 # Your own corpus-specific query set lives in test_queries.json (gitignored —
@@ -132,6 +139,90 @@ def matches_expected(doc_path: str, expected_file: str) -> bool:
     return expected_file.replace("\\", "/").lower() in doc_path.replace("\\", "/").lower()
 
 
+def judge_query(raw_results: list, reranked: list, expected_file: str, expected_text: str) -> dict:
+    """The ONE per-query judgement both evaluate()'s aggregates and the
+    --details recorder read, so the two can never report a different rank
+    for the same run: pre-rerank pool membership (same `matches_expected`
+    predicate as hit@k, applied to `raw_results` in the hybrid-ranked order
+    the reranker actually received) and the reranked rank (1-based) of the
+    first expected-file chunk — breaking on the first match exactly like the
+    original inline loop, so hit@k/MRR do not move when this is pulled out
+    from under them. text_match_at_1 is only ever true at rank 1, mirroring
+    the original scoring (a text match on any other rank does not count)."""
+    expected_best_pool_rank = None
+    for i, r in enumerate(raw_results, 1):
+        if matches_expected(r.get("doc_path", ""), expected_file):
+            expected_best_pool_rank = i
+            break
+
+    found_rank = None
+    text_match_at_1 = False
+    for rank, (orig_idx, score) in enumerate(reranked, 1):
+        r = raw_results[orig_idx]
+        if matches_expected(r.get("doc_path", ""), expected_file):
+            found_rank = rank
+            if rank == 1:
+                text_match_at_1 = expected_text.lower() in r.get("text", "").lower()
+            break
+
+    return {
+        "expected_in_pool": expected_best_pool_rank is not None,
+        "expected_best_pool_rank": expected_best_pool_rank,
+        "found_rank": found_rank,
+        "text_match_at_1": text_match_at_1,
+    }
+
+
+def build_detail_record(index: int, tq: dict, raw_results: list, reranked: list,
+                         judged: dict, has_pool: bool) -> dict:
+    """One --details record for query `index`, built from the same `judged`
+    mapping evaluate()/evaluate_via_daemon() scored from. `has_pool=False`
+    (the --daemon path) always reports pool: null — the daemon never exposes
+    a separate pre-rerank pool, only its final reranked results, so there is
+    nothing honest to put there."""
+    expected_file = tq["expected_file"]
+    expected_text = tq.get("expected_text_contains", "")
+    top = []
+    for rank, (orig_idx, score) in enumerate(reranked, 1):
+        r = raw_results[orig_idx]
+        doc_path = r.get("doc_path", "")
+        text = r.get("text", "")
+        top.append({
+            "rank": rank,
+            "doc_path": doc_path,
+            "chunk_index": r.get("chunk_index"),
+            "heading": r.get("heading", ""),
+            "rerank_score": round(float(score), 4),
+            "expected": matches_expected(doc_path, expected_file),
+            "text_match": expected_text.lower() in text.lower(),
+            "preview": text[:200],
+        })
+    return {
+        "index": index,
+        "query": tq["query"],
+        "expected_file": expected_file,
+        "expected_text_contains": expected_text,
+        "pool": ({"size": len(raw_results), "expected_in_pool": judged["expected_in_pool"],
+                  "expected_best_pool_rank": judged["expected_best_pool_rank"]}
+                 if has_pool else None),
+        "found_rank": judged["found_rank"],
+        "text_match_at_1": judged["text_match_at_1"],
+        "top": top,
+    }
+
+
+def write_details_file(path, results: dict, records: list) -> None:
+    """Write the --details JSON: the run's cell (the same params/models/mode
+    the results file already writes) plus one judgement record per query, in
+    query-set order. Pure I/O called AFTER scoring finishes, so writing (or
+    skipping) this file can never change `results`."""
+    cell = {k: results[k] for k in ("params", "models", "mode") if k in results}
+    payload = {"cell": cell, "queries": records}
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 def evaluate(
     embedder: Embedder,
     reranker: Reranker,
@@ -145,7 +236,7 @@ def evaluate(
     text_matches = 0
     reciprocal_ranks = []
 
-    for tq in test_queries:
+    for qi, tq in enumerate(test_queries):
         query = tq["query"]
         expected_file = tq["expected_file"]
         expected_text = tq.get("expected_text_contains", "")
@@ -163,30 +254,30 @@ def evaluate(
 
         if not raw_results:
             reciprocal_ranks.append(0.0)
+            if DETAILS_DUMP is not None:
+                judged = judge_query([], [], expected_file, expected_text)
+                DETAILS_DUMP.append(build_detail_record(qi, tq, [], [], judged, has_pool=True))
             continue
 
         texts = [r["text"] for r in raw_results]
         headings = [r.get("heading", "") for r in raw_results]
         reranked = reranker.rerank(query, texts, top_k=RERANK_TOP_K, headings=headings)
 
-        found_rank = None
-        for rank, (orig_idx, score) in enumerate(reranked, 1):
-            r = raw_results[orig_idx]
-            doc_path = r.get("doc_path", "")
-            if matches_expected(doc_path, expected_file):
-                if found_rank is None:
-                    found_rank = rank
-                if rank == 1:
-                    hits_at_1 += 1
-                    if expected_text.lower() in r["text"].lower():
-                        text_matches += 1
-                if rank <= 3:
-                    hits_at_3 += 1
-                if rank <= 5:
-                    hits_at_5 += 1
-                break
+        judged = judge_query(raw_results, reranked, expected_file, expected_text)
+        found_rank = judged["found_rank"]
+        if found_rank == 1:
+            hits_at_1 += 1
+            if judged["text_match_at_1"]:
+                text_matches += 1
+        if found_rank is not None and found_rank <= 3:
+            hits_at_3 += 1
+        if found_rank is not None and found_rank <= 5:
+            hits_at_5 += 1
 
         reciprocal_ranks.append(1.0 / found_rank if found_rank else 0.0)
+
+        if DETAILS_DUMP is not None:
+            DETAILS_DUMP.append(build_detail_record(qi, tq, raw_results, reranked, judged, has_pool=True))
 
     n = len(test_queries)
     mrr = sum(reciprocal_ranks) / n if n else 0
@@ -228,16 +319,29 @@ def evaluate_via_daemon(client, test_queries: list, limit: int = RERANK_TOP_K) -
                                                "include_sessions": False, "response_format": "full"})
         except Exception as e:
             sys.exit(f"daemon became unreachable at query {qi}/{n}: {e}")
-        rank = None
-        for i, r in enumerate(out.get("results", []), 1):
-            if matches_expected(r["file"], tq["expected_file"]):
-                rank = i
-                if i == 1 and tq.get("expected_text_contains", "").lower() in r.get("text", "").lower():
-                    text += 1
-                break
+
+        # Normalize to the doc_path/chunk_index/heading/text shape judge_query
+        # and build_detail_record expect — the daemon's on-wire key is
+        # `file`, not `doc_path`, and it carries no chunk_index. The daemon
+        # already returns its final reranked order, so "raw_results" here
+        # IS that order (no separate pre-rerank pool exists to inspect).
+        daemon_rows = [{"doc_path": r.get("file", ""), "chunk_index": r.get("chunk_index"),
+                        "heading": r.get("heading", ""), "text": r.get("text", "")}
+                       for r in out.get("results", [])]
+        daemon_reranked = [(i, r.get("rerank_score", 0.0))
+                           for i, r in enumerate(out.get("results", []))]
+        judged = judge_query(daemon_rows, daemon_reranked, tq["expected_file"],
+                             tq.get("expected_text_contains", ""))
+        rank = judged["found_rank"]
+        if judged["text_match_at_1"]:
+            text += 1
         rr.append(1.0 / rank if rank else 0.0)
         hits1 += rank == 1
         hits3 += bool(rank and rank <= 3)
+
+        if DETAILS_DUMP is not None:
+            DETAILS_DUMP.append(build_detail_record(qi - 1, tq, daemon_rows, daemon_reranked,
+                                                     judged, has_pool=False))
     mrr = sum(rr) / n if n else 0
     return {"total_queries": n, "hit_at_1": hits1 / n if n else 0, "hit_at_3": hits3 / n if n else 0,
             "hit_at_5": None, "mrr": mrr, "text_match_at_1": text / n if n else 0,
@@ -285,6 +389,12 @@ def main():
                         help="Rebuild from exactly the files listed in this v1 manifest (parity gates)")
     parser.add_argument("--db", type=str, default=None,
                         help="Evaluate an existing v2 index at PATH without rebuilding or deleting it")
+    parser.add_argument("--details", type=str, default=None,
+                        help="Write one judgement record per query (pool membership, reranked "
+                             "rank, top-k rows) so eval/details_diff.py can pin a regression on "
+                             "the embedder's pool or the reranker's ordering. Works in every "
+                             "mode, including --daemon (pool is null there — no pre-rerank pool "
+                             "to inspect).")
     args = parser.parse_args()
 
     if args.db and args.rebuild:
@@ -294,6 +404,9 @@ def main():
 
     global CANDIDATE_DUMP
     CANDIDATE_DUMP = {} if args.dump_candidates else None
+
+    global DETAILS_DUMP
+    DETAILS_DUMP = [] if args.details else None
 
     use_live = args.live or not args.rebuild  # default to live if index exists
 
@@ -406,6 +519,13 @@ def main():
         results["mode"] = "db" if args.db else ("live" if (use_live and live_db.exists()) else "rebuild")
 
     results["timestamp"] = datetime.now(timezone.utc).isoformat()
+
+    # --details: written once `results` carries the final params/models/mode
+    # (both the daemon and in-process branches set these above), one call
+    # site for both modes. DETAILS_DUMP was populated during evaluate()/
+    # evaluate_via_daemon() above; this is pure I/O and never touches scoring.
+    if args.details:
+        write_details_file(args.details, results, DETAILS_DUMP or [])
 
     # Save to results history
     results_dir = EVAL_DIR / "results"
