@@ -95,7 +95,9 @@ Mainframe answer matches additionally require the expected text in a relevant
 document's returned chunk. These twenty checks are literal passage-match
 proxies, not a human assessment of every valid answer or paraphrase. Scores
 are not comparable with deduplicated BEIR
-leaderboards, the repository's composite gate, or another corpus/harness.
+leaderboards, the repository's composite gate, or another corpus/harness. The
+composite gate's own verdict on the default pairing is recorded in
+[COMPACT_RERANKERS.md](COMPACT_RERANKERS.md#composite-gate-on-the-maintainer-corpus).
 
 ## Embedders with Qwen3 Reranker 4B INT8
 
