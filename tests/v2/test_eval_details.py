@@ -275,83 +275,243 @@ def test_classify_passage_lost_in_both_branches():
     assert dd.classify_cross(base, other) == "PASSAGE_LOST"
 
 
-def test_compare_same_embedder_uses_attribution_labels():
-    """Gap 3: same cell.models.embedder string on both sides -> the existing
-    EMBEDDER/RERANKER/RECOVERED/POOL_RANK label set, no warning."""
-    dd = _load("eval_details_diff_gap3_same", "eval/details_diff.py")
+def _full_order_entry(doc_path, chunk_index, rank=1, expected=True, text_match=False):
+    return {"rank": rank, "doc_path": doc_path, "chunk_index": chunk_index,
+            "rerank_score": 0.5, "expected": expected, "text_match": text_match}
 
-    base_details = {"cell": {"models": {"embedder": "qwen3-8b"}, "mode": "live"}, "queries": [
-        {"index": 0, "expected_file": "a.md", "found_rank": 1, "text_match_at_1": True,
-         "pool": {"size": 20, "expected_in_pool": True, "expected_best_pool_rank": 1,
-                  "expected_text_in_pool": True, "expected_text_pool_rank": 1}},
+
+# ---------- Round 3, Rule 1: attribution requires the SAME CANDIDATE SET,
+# not the same embedder name ----------
+
+def test_diff_records_uses_attributing_label_when_candidate_sets_are_identical():
+    dd = _load("eval_details_diff_r3_rule1a", "eval/details_diff.py")
+    shared_full_order = [_full_order_entry("a.md", 0), _full_order_entry("b.md", 1, rank=2, expected=False)]
+    common_pool = {"size": 2, "expected_in_pool": True, "expected_best_pool_rank": 1,
+                   "expected_text_in_pool": True, "expected_text_pool_rank": 1}
+    base_q = [{"index": 0, "expected_file": "a.md", "found_rank": 1, "text_match_at_1": True,
+               "expected_full_rank": 1, "expected_text_full_rank": 1,
+               "pool": common_pool, "full_order": shared_full_order}]
+    other_q = [{"index": 0, "expected_file": "a.md", "found_rank": 2, "text_match_at_1": False,
+                "expected_full_rank": 2, "expected_text_full_rank": 2,
+                "pool": common_pool, "full_order": shared_full_order}]
+
+    rows = dd.diff_records(base_q, other_q, params_match=True)
+    assert len(rows) == 1
+    assert rows[0]["pool_identity"] == "identical"
+    assert rows[0]["class"] == "RERANKER"
+    assert rows[0]["reason"] is None
+
+
+def test_diff_records_falls_back_to_factual_label_when_one_candidate_swapped():
+    """Same embedder-name situation as before, but the pool ACTUALLY
+    changed (one candidate swapped) -- must get the factual label with a
+    reason, not RERANKER."""
+    dd = _load("eval_details_diff_r3_rule1b", "eval/details_diff.py")
+    base_full_order = [_full_order_entry("a.md", 0), _full_order_entry("b.md", 1, rank=2)]
+    other_full_order = [_full_order_entry("a.md", 0), _full_order_entry("c.md", 1, rank=2)]  # b -> c
+    common_pool = {"size": 2, "expected_in_pool": True, "expected_best_pool_rank": 1,
+                   "expected_text_in_pool": True, "expected_text_pool_rank": 1}
+    base_q = [{"index": 0, "expected_file": "a.md", "found_rank": 1, "text_match_at_1": True,
+               "expected_full_rank": 1, "expected_text_full_rank": 1,
+               "pool": common_pool, "full_order": base_full_order}]
+    other_q = [{"index": 0, "expected_file": "a.md", "found_rank": 2, "text_match_at_1": False,
+                "expected_full_rank": 2, "expected_text_full_rank": 2,
+                "pool": common_pool, "full_order": other_full_order}]
+
+    rows = dd.diff_records(base_q, other_q, params_match=True)
+    assert len(rows) == 1
+    assert rows[0]["pool_identity"] == "differs"
+    assert rows[0]["class"] == "RANK_WORSE"          # classify_cross, never RERANKER
+    assert rows[0]["reason"] == "pool: differs"
+
+
+def test_diff_records_treats_missing_full_order_as_unrecorded():
+    dd = _load("eval_details_diff_r3_rule1c", "eval/details_diff.py")
+    base_q = [{"index": 0, "expected_file": "a.md", "found_rank": 1, "text_match_at_1": True,
+               "expected_full_rank": 1, "expected_text_full_rank": 1,
+               "pool": {"size": 2, "expected_in_pool": True, "expected_best_pool_rank": 1,
+                        "expected_text_in_pool": True, "expected_text_pool_rank": 1},
+               "full_order": None}]                       # e.g. --daemon-style record
+    other_q = [{"index": 0, "expected_file": "a.md", "found_rank": 2, "text_match_at_1": False,
+                "expected_full_rank": 2, "expected_text_full_rank": 2,
+                "pool": None, "full_order": None}]
+
+    rows = dd.diff_records(base_q, other_q, params_match=True)
+    assert len(rows) == 1
+    assert rows[0]["pool_identity"] == "unrecorded"
+    assert rows[0]["reason"] == "pool: unrecorded"
+    assert rows[0]["class"] != "RERANKER"              # factual label only
+
+
+def test_diff_records_forces_factual_label_when_params_differ_despite_identical_candidates():
+    dd = _load("eval_details_diff_r3_rule1d", "eval/details_diff.py")
+    shared_full_order = [_full_order_entry("a.md", 0), _full_order_entry("b.md", 1, rank=2)]
+    common_pool = {"size": 2, "expected_in_pool": True, "expected_best_pool_rank": 1,
+                   "expected_text_in_pool": True, "expected_text_pool_rank": 1}
+    base_q = [{"index": 0, "expected_file": "a.md", "found_rank": 1, "text_match_at_1": True,
+               "expected_full_rank": 1, "expected_text_full_rank": 1,
+               "pool": common_pool, "full_order": shared_full_order}]
+    other_q = [{"index": 0, "expected_file": "a.md", "found_rank": 2, "text_match_at_1": False,
+                "expected_full_rank": 2, "expected_text_full_rank": 2,
+                "pool": common_pool, "full_order": shared_full_order}]
+
+    rows = dd.diff_records(base_q, other_q, params_match=False)
+    assert rows[0]["pool_identity"] == "identical"      # candidates matched...
+    assert rows[0]["reason"] == "params differ"          # ...but params didn't
+    assert rows[0]["class"] == "RANK_WORSE"
+
+
+def test_compare_gates_attribution_on_candidate_identity_not_embedder_name():
+    """The root-cause fix: a DIFFERENT embedder name no longer forces
+    factual labels for every row -- query 0's candidate set happens to be
+    identical (attribution allowed), query 1's differs (factual only)."""
+    dd = _load("eval_details_diff_r3_compare", "eval/details_diff.py")
+    shared_full_order = [_full_order_entry("a.md", 0), _full_order_entry("x.md", 1, rank=2)]
+    differing_full_order = [_full_order_entry("b.md", 0), _full_order_entry("y.md", 1, rank=2)]
+    common_params = {"candidate_pool": 20, "rerank_top_k": 3, "chunk_size": 256, "overlap_ratio": 0.35}
+    pool_a = {"size": 2, "expected_in_pool": True, "expected_best_pool_rank": 1,
+             "expected_text_in_pool": True, "expected_text_pool_rank": 1}
+    pool_b = {"size": 2, "expected_in_pool": True, "expected_best_pool_rank": 1,
+             "expected_text_in_pool": True, "expected_text_pool_rank": 1}
+
+    base_details = {"cell": {"models": {"embedder": "harrier-v1"}, "mode": "live", "params": common_params},
+                    "queries": [
+        {"index": 0, "query": "q0", "expected_file": "a.md", "found_rank": 1, "text_match_at_1": True,
+         "expected_full_rank": 1, "expected_text_full_rank": 1, "pool": pool_a,
+         "full_order": shared_full_order},
+        {"index": 1, "query": "q1", "expected_file": "b.md", "found_rank": 1, "text_match_at_1": True,
+         "expected_full_rank": 1, "expected_text_full_rank": 1, "pool": pool_b,
+         "full_order": differing_full_order},
     ]}
-    other_details = {"cell": {"models": {"embedder": "qwen3-8b"}, "mode": "live"}, "queries": [
-        {"index": 0, "expected_file": "a.md", "found_rank": 3, "text_match_at_1": False,
-         "pool": {"size": 20, "expected_in_pool": True, "expected_best_pool_rank": 1,
-                  "expected_text_in_pool": True, "expected_text_pool_rank": 1}},
-    ]}
-
-    result = dd.compare(base_details, other_details)
-    assert result["same_embedder"] is True
-    assert result["rows"][0]["class"] == "RERANKER"
-    assert result["warnings"] == []
-
-
-def test_compare_different_embedder_uses_factual_labels_and_warns():
-    """Gap 3: different cell.models.embedder strings -> factual-only labels
-    (POOL_LOST/RANK_WORSE, not EMBEDDER/RERANKER) plus a header warning that
-    rank changes are not attributable to the reranker."""
-    dd = _load("eval_details_diff_gap3_cross", "eval/details_diff.py")
-
-    base_details = {"cell": {"models": {"embedder": "harrier-v1"}, "mode": "live"}, "queries": [
-        {"index": 0, "expected_file": "a.md", "found_rank": 1, "text_match_at_1": True,
-         "pool": {"size": 20, "expected_in_pool": True, "expected_best_pool_rank": 1,
-                  "expected_text_in_pool": True, "expected_text_pool_rank": 1}},
-        {"index": 1, "expected_file": "b.md", "found_rank": 1, "text_match_at_1": True,
-         "pool": {"size": 20, "expected_in_pool": True, "expected_best_pool_rank": 2,
-                  "expected_text_in_pool": True, "expected_text_pool_rank": 2}},
-    ]}
-    other_details = {"cell": {"models": {"embedder": "harrier-v2"}, "mode": "live"}, "queries": [
-        {"index": 0, "expected_file": "a.md", "found_rank": None, "text_match_at_1": False,
-         "pool": {"size": 20, "expected_in_pool": False, "expected_best_pool_rank": None,
-                  "expected_text_in_pool": False, "expected_text_pool_rank": None}},
-        {"index": 1, "expected_file": "b.md", "found_rank": 3, "text_match_at_1": False,
-         "pool": {"size": 20, "expected_in_pool": True, "expected_best_pool_rank": 2,
-                  "expected_text_in_pool": True, "expected_text_pool_rank": 2}},
+    other_details = {"cell": {"models": {"embedder": "harrier-v2"}, "mode": "live", "params": common_params},
+                     "queries": [
+        {"index": 0, "query": "q0", "expected_file": "a.md", "found_rank": 2, "text_match_at_1": False,
+         "expected_full_rank": 2, "expected_text_full_rank": 2, "pool": pool_a,
+         "full_order": shared_full_order},                          # SAME candidates -> attribution OK
+        {"index": 1, "query": "q1", "expected_file": "b.md", "found_rank": 2, "text_match_at_1": False,
+         "expected_full_rank": 2, "expected_text_full_rank": 2, "pool": pool_b,
+         "full_order": [_full_order_entry("b.md", 0), _full_order_entry("z.md", 1, rank=2)]},  # differs
     ]}
 
     result = dd.compare(base_details, other_details)
     assert result["same_embedder"] is False
-    assert result["rows"][0]["class"] == "POOL_LOST"       # not EMBEDDER: pools were not the same
-    assert result["rows"][1]["class"] == "RANK_WORSE"       # not RERANKER
+    assert result["rows"][0]["class"] == "RERANKER"        # attributing despite different embedder NAME
+    assert result["rows"][0]["reason"] is None
+    assert result["rows"][1]["class"] == "RANK_WORSE"       # factual: candidate set differed
+    assert result["rows"][1]["reason"] == "pool: differs"
     assert len(result["warnings"]) == 1
     assert "embedder" in result["warnings"][0].lower()
-    assert "reranker" in result["warnings"][0].lower()
 
 
-def test_compare_same_embedder_warns_if_embedder_label_still_occurs():
-    """EMBEDDER 'cannot occur' when both runs report the same embedder -- if
-    pool membership still flipped, that assumption didn't hold (different
-    corpus/index/config even with the same model), and compare() must say
-    so instead of silently trusting the label."""
-    dd = _load("eval_details_diff_gap3_warn", "eval/details_diff.py")
+def test_compare_same_embedder_and_identical_pool_uses_attribution_labels():
+    dd = _load("eval_details_diff_r3_compare_same", "eval/details_diff.py")
+    shared_full_order = [_full_order_entry("a.md", 0), _full_order_entry("x.md", 1, rank=2)]
+    common_params = {"candidate_pool": 20, "rerank_top_k": 3, "chunk_size": 256, "overlap_ratio": 0.35}
+    common_pool = {"size": 2, "expected_in_pool": True, "expected_best_pool_rank": 1,
+                   "expected_text_in_pool": True, "expected_text_pool_rank": 1}
 
-    base_details = {"cell": {"models": {"embedder": "harrier-v1"}, "mode": "live"}, "queries": [
-        {"index": 0, "expected_file": "a.md", "found_rank": 1, "text_match_at_1": True,
-         "pool": {"size": 20, "expected_in_pool": True, "expected_best_pool_rank": 1,
-                  "expected_text_in_pool": True, "expected_text_pool_rank": 1}},
-    ]}
-    other_details = {"cell": {"models": {"embedder": "harrier-v1"}, "mode": "rebuild"}, "queries": [
-        {"index": 0, "expected_file": "a.md", "found_rank": None, "text_match_at_1": False,
-         "pool": {"size": 20, "expected_in_pool": False, "expected_best_pool_rank": None,
-                  "expected_text_in_pool": False, "expected_text_pool_rank": None}},
-    ]}
+    base_details = {"cell": {"models": {"embedder": "qwen3-8b"}, "mode": "live", "params": common_params},
+                    "queries": [{"index": 0, "query": "q0", "expected_file": "a.md", "found_rank": 1,
+                                 "text_match_at_1": True, "expected_full_rank": 1, "expected_text_full_rank": 1,
+                                 "pool": common_pool, "full_order": shared_full_order}]}
+    other_details = {"cell": {"models": {"embedder": "qwen3-8b"}, "mode": "live", "params": common_params},
+                     "queries": [{"index": 0, "query": "q0", "expected_file": "a.md", "found_rank": 3,
+                                  "text_match_at_1": False, "expected_full_rank": 3, "expected_text_full_rank": 3,
+                                  "pool": common_pool, "full_order": shared_full_order}]}
 
     result = dd.compare(base_details, other_details)
     assert result["same_embedder"] is True
-    assert result["rows"][0]["class"] == "EMBEDDER"
-    assert len(result["warnings"]) == 1
-    assert "same embedder" in result["warnings"][0].lower()
+    assert result["params_match"] is True
+    assert result["rows"][0]["class"] == "RERANKER"
+    assert result["rows"][0]["reason"] is None
+    assert result["warnings"] == []
+
+
+# ---------- Round 3, Rule 2: a row is "changed" when full ranks moved,
+# even if found_rank/text_match_at_1 did not ----------
+
+def test_changed_full_rank_movement_produces_one_row_even_with_found_rank_unchanged():
+    dd = _load("eval_details_diff_r3_rule2", "eval/details_diff.py")
+    common_pool = {"size": 20, "expected_in_pool": True, "expected_best_pool_rank": 5,
+                   "expected_text_in_pool": True, "expected_text_pool_rank": 5}
+    base_q = [{"index": 0, "expected_file": "a.md", "found_rank": None, "text_match_at_1": False,
+               "expected_full_rank": 4, "expected_text_full_rank": 4, "pool": dict(common_pool),
+               "full_order": None}]
+    other_q = [{"index": 0, "expected_file": "a.md", "found_rank": None, "text_match_at_1": False,
+                "expected_full_rank": 20, "expected_text_full_rank": 20, "pool": dict(common_pool),
+                "full_order": None}]
+
+    rows = dd.diff_records(base_q, other_q)
+    assert len(rows) == 1
+    assert rows[0]["base_full_rank"] == 4
+    assert rows[0]["other_full_rank"] == 20
+
+
+def test_render_text_and_markdown_include_full_rank_columns():
+    dd = _load("eval_details_diff_r3_render", "eval/details_diff.py")
+    rows = [{"index": 0, "expected_file": "a.md", "base_rank": None, "other_rank": None,
+             "base_full_rank": 4, "other_full_rank": 20, "base_text_full_rank": 4,
+             "other_text_full_rank": 20, "base_in_pool": True, "other_in_pool": True,
+             "pool_identity": "identical", "class": "POOL_RANK", "reason": None}]
+    text = dd.render_text(rows, {}, {})
+    assert "4" in text and "20" in text
+    md = dd.render_markdown(rows, {}, {})
+    assert "4" in md and "20" in md
+
+
+# ---------- Round 3, Rule 3: passage reordering WITHIN the expected file ----------
+
+def test_classify_passage_reordered_within_expected_file():
+    dd = _load("eval_details_diff_r3_rule3", "eval/details_diff.py")
+
+    base = {"found_rank": 1, "text_match_at_1": True, "expected_text_full_rank": 1,
+            "pool": {"expected_in_pool": True, "expected_best_pool_rank": 1,
+                     "expected_text_in_pool": True, "expected_text_pool_rank": 1}}
+    other = {"found_rank": 1, "text_match_at_1": False, "expected_text_full_rank": 3,
+             "pool": {"expected_in_pool": True, "expected_best_pool_rank": 1,
+                      "expected_text_in_pool": True, "expected_text_pool_rank": 3}}
+
+    assert dd.classify(base, other) == "PASSAGE_REORDERED"     # worse
+    assert dd.classify(other, base) == "RECOVERED"             # better (swapped direction)
+    assert dd.classify_cross(base, other) == "TEXT_ONLY"       # without pool identity
+
+
+# ---------- Round 3, Rule 4: refuse mismatched query sets ----------
+
+def test_compare_raises_on_unequal_query_set_hashes():
+    dd = _load("eval_details_diff_r3_rule4a", "eval/details_diff.py")
+    base_details = {"cell": {"query_set_sha256": "aaa"}, "queries": []}
+    other_details = {"cell": {"query_set_sha256": "bbb"}, "queries": []}
+    with pytest.raises(ValueError) as exc_info:
+        dd.compare(base_details, other_details)
+    assert "aaa" in str(exc_info.value) and "bbb" in str(exc_info.value)
+
+
+def test_compare_passes_on_equal_query_set_hashes():
+    dd = _load("eval_details_diff_r3_rule4b", "eval/details_diff.py")
+    base_details = {"cell": {"query_set_sha256": "same-hash", "models": {"embedder": "e"}, "mode": "live"},
+                    "queries": [{"index": 0, "query": "q0", "expected_file": "a.md", "found_rank": 1,
+                                 "text_match_at_1": True, "pool": None, "full_order": None}]}
+    other_details = {"cell": {"query_set_sha256": "same-hash", "models": {"embedder": "e"}, "mode": "live"},
+                     "queries": [{"index": 0, "query": "q0", "expected_file": "a.md", "found_rank": 1,
+                                  "text_match_at_1": True, "pool": None, "full_order": None}]}
+    result = dd.compare(base_details, other_details)      # must not raise
+    assert result["rows"] == []
+
+
+def test_compare_raises_on_legacy_files_with_differing_query_at_index():
+    """Neither file carries query_set_sha256 (pre-Gap-4) -- fall back to
+    comparing the actual query text at each shared index."""
+    dd = _load("eval_details_diff_r3_rule4c", "eval/details_diff.py")
+    base_details = {"cell": {"models": {"embedder": "e"}, "mode": "live"}, "queries": [
+        {"index": 0, "query": "alpha query", "expected_file": "a.md", "found_rank": 1,
+         "text_match_at_1": True, "pool": None, "full_order": None}]}
+    other_details = {"cell": {"models": {"embedder": "e"}, "mode": "live"}, "queries": [
+        {"index": 0, "query": "a totally different query", "expected_file": "a.md", "found_rank": 1,
+         "text_match_at_1": True, "pool": None, "full_order": None}]}
+    with pytest.raises(ValueError) as exc_info:
+        dd.compare(base_details, other_details)
+    assert "0" in str(exc_info.value)          # the index is named in the message
 
 
 # ---------- 4. --details writer round-trips ----------
