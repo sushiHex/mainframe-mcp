@@ -10,6 +10,16 @@ MAX_RESULTS = 10
 SNIPPET_CHARS = 200
 TEXT_CHARS = 500
 
+# The complete `confidence` vocabulary `search()` can emit. Reranker backends
+# expose incompatible scoring scales — some bounded probabilities, some
+# unbounded logits — so PR #17 removed the absolute "high"/"low" threshold in
+# favor of these two states. This is the one place that vocabulary is
+# declared; skills/mainframe-retrieval/SKILL.md is checked against it in
+# tests/v2/test_skill_search_contract.py so the two cannot drift apart again.
+CONFIDENCE_NONE = "none"
+CONFIDENCE_UNAVAILABLE = "unavailable"
+CONFIDENCE_VALUES = frozenset({CONFIDENCE_NONE, CONFIDENCE_UNAVAILABLE})
+
 _EMPTY_GUIDANCE = ("No matches. Rephrase with SPECIFIC technical terms (function/class/proper "
                    "names, exact config keys, error strings) — natural-language questions rank "
                    "poorly. Or set include_sessions=true to also search raw session captures.")
@@ -67,7 +77,7 @@ class SearchService:
         q = self.models.invoke("embedder", lambda e: e.embed_query(query))
         raw = self.store.search(q, top_k=pool, include_captures=include_sessions, query_text=query)
         if not raw:
-            return {"results": [], "confidence": "none", "guidance": _EMPTY_GUIDANCE}
+            return {"results": [], "confidence": CONFIDENCE_NONE, "guidance": _EMPTY_GUIDANCE}
         texts = [r["text"] for r in raw]
         headings = [r.get("heading", "") for r in raw]
         ranked = self.models.invoke("reranker", lambda r: r.rerank(query, texts, top_k=limit, headings=headings))
@@ -76,7 +86,7 @@ class SearchService:
         # Reranker scores are model-native ordering signals. Some backends
         # expose probabilities while others expose unbounded logits, so an
         # absolute threshold cannot represent confidence across backends.
-        return {"results": results, "confidence": "unavailable"}
+        return {"results": results, "confidence": CONFIDENCE_UNAVAILABLE}
 
     @staticmethod
     def _shape(row: dict, score: float, fmt: str) -> dict:
