@@ -1,10 +1,18 @@
-# 2.0.0a1 Preview
+# 2.0.0a2 Preview
 
-The original tagged artifact includes the v1 server and opt-in v2 daemon.
-**Current public main has since promoted Harrier and the v2 daemon:**
-`mainframe-mcp` now forwards to v2. Install current source or its audited wheel
-for that behavior; the original release download below is historical.
-Existing indexes are not migrated automatically.
+**2.0.0a2** ships Harrier 0.6B native (1024-dim) and Qwen3-Reranker-0.6B.
+Install current source or the audited wheel for this behavior.
+
+**Breaking change:** indexes built under 2.0.0a1 must be rebuilt offline because
+the embedding dimension changed (Qwen3-Embedding-8B 4096-dim → Harrier 1024-dim).
+Run `mainframe down` to stop the daemon, then `mainframe rebuild` with that
+daemon's configuration to rebuild the index with new embeddings. The dimension
+mismatch is caught by the fingerprint check (`IndexStaleError`); silent corruption
+is prevented by refusing writes and degraded search on dimension drift.
+
+**2.0.0a1 (historical)** shipped the original v1 server and opt-in v2 daemon
+with Qwen3-Embedding-8B (4096-dim) + Qwen3-Reranker-4B. The tagged artifact
+remains available for reference and rollback.
 
 ## Capabilities
 
@@ -23,11 +31,11 @@ v2 excludes captures from search unless sessions are requested. See the
 
 ## Install an audited artifact
 
-Download the wheel and `SHA256SUMS` from the [preview release](https://github.com/sushiHex/mainframe-mcp/releases/tag/v2.0.0a1).
+Download the wheel and `SHA256SUMS` from the [preview release](https://github.com/sushiHex/mainframe-mcp/releases/tag/v2.0.0a2).
 Verify the wheel hash against that manifest before installation:
 
 ```powershell
-Get-FileHash ./mainframe_mcp-2.0.0a1-py3-none-any.whl -Algorithm SHA256
+Get-FileHash ./mainframe_mcp-2.0.0a2-py3-none-any.whl -Algorithm SHA256
 ```
 
 On Linux, use `sha256sum -c SHA256SUMS` with both distribution files present.
@@ -39,7 +47,7 @@ python -m venv .venv-preview
 # POSIX: source .venv-preview/bin/activate
 python -m pip install --upgrade pip
 # Install CUDA-enabled PyTorch using the selector linked below, then:
-python -m pip install ./mainframe_mcp-2.0.0a1-py3-none-any.whl
+python -m pip install ./mainframe_mcp-2.0.0a2-py3-none-any.whl
 mainframe --help
 ```
 
