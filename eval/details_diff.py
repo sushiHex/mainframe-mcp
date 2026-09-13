@@ -56,16 +56,28 @@ def _rank_key(rank):
 
 
 def _candidate_set(record: dict):
-    """{(doc_path, chunk_index), ...} — the actual candidate IDENTITIES this
-    query's `full_order` names, order-insensitive (the pool's own order is
-    not what proves two runs saw the same candidates). None when
-    `full_order` is absent (records older than Gap 1, or --daemon mode,
-    which has no full pool to report) — an absent set must never read as
-    "empty and therefore equal"."""
+    """{(doc_path, chunk_index, content_sha256), ...} — the actual candidate
+    IDENTITIES this query's `full_order` names, order-insensitive (the
+    pool's own order is not what proves two runs saw the same candidates).
+    CONTENT is part of the identity (Round 4): (doc_path, chunk_index) alone
+    is the same before and after a document is edited and re-indexed, even
+    though the reranker scored different text — content_sha256 breaks that
+    false match.
+
+    None when `full_order` is absent (records older than Gap 1, or
+    --daemon mode, which has no full pool to report) OR when any entry in
+    it lacks `content_sha256` (records older than Round 4) — an absent
+    signal must never read as "empty/missing and therefore equal"."""
     full_order = record.get("full_order")
     if full_order is None:
         return None
-    return frozenset((e.get("doc_path"), e.get("chunk_index")) for e in full_order)
+    triples = []
+    for e in full_order:
+        content = e.get("content_sha256")
+        if not content:
+            return None
+        triples.append((e.get("doc_path"), e.get("chunk_index"), content))
+    return frozenset(triples)
 
 
 def _pool_identity(base: dict, other: dict) -> str:
@@ -105,17 +117,16 @@ def _passage_lost(base: dict, other: dict) -> bool:
 
 
 def _passage_reordering_class(base: dict, other: dict):
-    """Rule 3: both runs rank the expected FILE 1st, but text_match_at_1
-    flipped — the file didn't move, but which of ITS chunks won the top
-    slot did. Diagnose from `expected_text_full_rank` (the answer chunk's
-    position in the FULL reranked order, not just the top-3 window):
-    worse -> PASSAGE_REORDERED (an attributing label — the reranker moved
-    the answer chunk below another chunk of the same file), better ->
-    RECOVERED. None (not applicable, or the ranks tied) when this rule does
-    not decide the query."""
-    if not (base.get("found_rank") == 1 and other.get("found_rank") == 1
-            and base.get("text_match_at_1") != other.get("text_match_at_1")):
-        return None
+    """Rule 3 (generalized by Round 4 Rule 2): the expected FILE's rank is
+    genuinely unchanged (the caller has already tied out found_rank AND
+    expected_full_rank) but `expected_text_full_rank` — the ANSWER chunk's
+    position in the full reranked order — moved: worse -> PASSAGE_REORDERED
+    (an attributing label — the reranker now prefers a different chunk of
+    the same file over the one containing the answer), better -> RECOVERED.
+    None (not applicable, or the ranks tied) when this rule does not decide
+    the query — e.g. when neither record carries expected_text_full_rank at
+    all, both sides read as None and tie, which is the correct "no signal"
+    outcome."""
     t_b = _rank_key(base.get("expected_text_full_rank"))
     t_o = _rank_key(other.get("expected_text_full_rank"))
     if t_o > t_b:
@@ -138,23 +149,29 @@ def classify(base: dict, other: dict) -> str:
                         disagree, which is a data problem, not a fault
                         class, but the branch is kept rather than hidden.
     RERANKER            still in the pool under both runs, but the reranker
-                        now ranks it worse (a non-find counts as worse than
-                        any numeric rank).
-    RECOVERED           still in the pool under both runs, and the reranker
-                        now ranks it better (either the overall rank or, via
-                        Rule 3, the answer chunk's position within its file).
-    PASSAGE_LOST        the file stayed in the pool and the reranked rank
-                        did not get worse, but the specific answer passage
-                        left the pool (see `_passage_lost`) — the file is
-                        still there, its answer chunk is not.
-    PASSAGE_REORDERED   both runs rank the file 1st, but the reranker now
-                        prefers a DIFFERENT chunk of that same file over the
-                        one containing the answer (see
-                        `_passage_reordering_class`).
-    POOL_RANK           in the pool under both runs and the reranked rank is
-                        unchanged, but WHERE it sat in the pre-rerank pool
-                        moved — informational: the hybrid ranking shuffled
-                        without changing the outcome.
+                        now ranks it worse — either found_rank (the scored
+                        top-k window) moved, or (Round 4 Rule 2) found_rank
+                        TIED (including both null) while expected_full_rank
+                        — the FULL ranking a top-k window cannot see past —
+                        got worse. A non-find counts as worse than any
+                        numeric rank at both granularities.
+    RECOVERED           the mirror of RERANKER: still in the pool under both
+                        runs, and the reranker now ranks it better, at
+                        whichever granularity (found_rank, expected_full_rank,
+                        or Rule 3's expected_text_full_rank) actually moved.
+    PASSAGE_LOST        the file's rank (top-k AND full) is unchanged, but
+                        the specific answer passage left the pool entirely
+                        (see `_passage_lost`) — the file is still there, its
+                        answer chunk is not.
+    PASSAGE_REORDERED   the file's rank (top-k AND full) is unchanged, but
+                        the reranker now prefers a DIFFERENT chunk of that
+                        same file over the one containing the answer (see
+                        `_passage_reordering_class`, keyed on
+                        expected_text_full_rank).
+    POOL_RANK           the file's rank and the answer chunk's rank are both
+                        unchanged, but WHERE the file sat in the pre-rerank
+                        pool moved — informational: the hybrid ranking
+                        shuffled without changing the outcome.
     OTHER               anything else that still differs.
     """
     b_in, o_in = _in_pool(base), _in_pool(other)
@@ -165,6 +182,15 @@ def classify(base: dict, other: dict) -> str:
         if o_key > b_key:
             return "RERANKER"
         if o_key < b_key:
+            return "RECOVERED"
+        # found_rank tied (including both None): a top-3 window cannot see
+        # past itself, so escalate to the FULL rank (Round 4 Rule 2) before
+        # concluding "unchanged".
+        fb_key = _rank_key(base.get("expected_full_rank"))
+        fo_key = _rank_key(other.get("expected_full_rank"))
+        if fo_key > fb_key:
+            return "RERANKER"
+        if fo_key < fb_key:
             return "RECOVERED"
         if _passage_lost(base, other):
             return "PASSAGE_LOST"
@@ -302,10 +328,14 @@ def _check_query_sets(base_details: dict, other_details: dict) -> None:
     """Refuse (ValueError) to pair queries by `index` across two --details
     files that did not provably score the SAME query set — a positional
     index means nothing if question 5 in one file is not question 5 in the
-    other. Prefers `cell.query_set_sha256` (Gap 4) when both files carry it;
-    when either lacks it, falls back to comparing the actual `query` string
-    at each shared index and raises on the first mismatch, naming the
-    index."""
+    other. Prefers `cell.query_set_sha256` (Gap 4) when both files carry it.
+
+    When either lacks it, the fallback has two stages (Round 4 Rule 3): FIRST
+    the sets of `index` themselves must match exactly — a strict subset (one
+    file simply has fewer queries) used to be silently ignored, since the
+    old fallback only ever compared indices present on BOTH sides. Only once
+    the index sets agree does it compare the actual `query` string at each
+    index, raising on the first mismatch."""
     b_hash = base_details.get("cell", {}).get("query_set_sha256")
     o_hash = other_details.get("cell", {}).get("query_set_sha256")
     if b_hash and o_hash:
@@ -313,10 +343,22 @@ def _check_query_sets(base_details: dict, other_details: dict) -> None:
             raise ValueError(f"query sets differ: base query_set_sha256={b_hash!r}, "
                              f"other query_set_sha256={o_hash!r}")
         return
-    other_by_index = {q["index"]: q for q in other_details.get("queries", [])}
-    for q in base_details.get("queries", []):
-        match = other_by_index.get(q["index"])
-        if match is not None and match.get("query") != q.get("query"):
+
+    base_queries = base_details.get("queries", [])
+    other_queries = other_details.get("queries", [])
+    b_indices = {q["index"] for q in base_queries}
+    o_indices = {q["index"] for q in other_queries}
+    if b_indices != o_indices:
+        unmatched = sorted(b_indices ^ o_indices)
+        raise ValueError(
+            f"query sets differ: base has {len(b_indices)} indices, other has {len(o_indices)} "
+            f"indices; unmatched indices (up to 5 of {len(unmatched)}): {unmatched[:5]}"
+        )
+
+    other_by_index = {q["index"]: q for q in other_queries}
+    for q in base_queries:
+        match = other_by_index[q["index"]]
+        if match.get("query") != q.get("query"):
             raise ValueError(f"query sets differ at index {q['index']}: "
                              f"base query={q.get('query')!r}, other query={match.get('query')!r}")
 

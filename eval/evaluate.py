@@ -211,6 +211,28 @@ def judge_query(raw_results: list, reranked: list, expected_file: str, expected_
     }
 
 
+def _content_sha256(r: dict) -> str | None:
+    """First 16 hex chars identifying the candidate's SCORED content — so a
+    (doc_path, chunk_index) pair that survives a document edit + re-index
+    does not read as "the same candidate" when the reranker actually saw
+    different text.
+
+    Prefers the row's own `content_hash` (store.py's schema carries it on
+    every in-process raw_results row: sha256 of the chunk text, normalized
+    by whitespace/case, computed once at ingest — see
+    mainframe.core.hashing.content_hash). Falls back to hashing `text`
+    here when a row carries no such field (the --daemon path's normalized
+    rows have no content_hash on the wire — see _daemon_row)."""
+    content_hash = r.get("content_hash")
+    if content_hash:
+        return content_hash[:16]
+    text = r.get("text")
+    if text is None:
+        return None
+    import hashlib
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
 def build_detail_record(index: int, tq: dict, raw_results: list, reranked: list,
                          judged: dict, has_pool: bool, full_reranked: list | None = None) -> dict:
     """One --details record for query `index`, built from the same `judged`
@@ -223,7 +245,10 @@ def build_detail_record(index: int, tq: dict, raw_results: list, reranked: list,
     `full_order` (Gap 1) is the complete reranked ordering over the WHOLE
     pool, not just the scored top-k window `top` reflects — it is what lets
     a null `found_rank` be told apart from "rank 4" and "rank 20". No
-    `preview` field (keeps the file small at full-pool size)."""
+    `preview` field (keeps the file small at full-pool size). Every `top`/
+    `full_order` entry also carries `content_sha256` (see `_content_sha256`)
+    so details_diff can tell "same candidate" from "same doc_path/
+    chunk_index but the document changed underneath it"."""
     expected_file = tq["expected_file"]
     expected_text = tq.get("expected_text_contains", "")
     top = []
@@ -239,6 +264,7 @@ def build_detail_record(index: int, tq: dict, raw_results: list, reranked: list,
             "rerank_score": round(float(score), 4),
             "expected": matches_expected(doc_path, expected_file),
             "text_match": expected_text.lower() in text.lower(),
+            "content_sha256": _content_sha256(r),
             "preview": text[:200],
         })
 
@@ -257,6 +283,7 @@ def build_detail_record(index: int, tq: dict, raw_results: list, reranked: list,
                 "rerank_score": round(float(score), 4),
                 "expected": matches_expected(doc_path, expected_file),
                 "text_match": expected_text.lower() in text.lower(),
+                "content_sha256": _content_sha256(r),
             })
 
     return {

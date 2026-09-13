@@ -275,9 +275,11 @@ def test_classify_passage_lost_in_both_branches():
     assert dd.classify_cross(base, other) == "PASSAGE_LOST"
 
 
-def _full_order_entry(doc_path, chunk_index, rank=1, expected=True, text_match=False):
+def _full_order_entry(doc_path, chunk_index, rank=1, expected=True, text_match=False,
+                      content_sha256="c0ffee0000000000"):
     return {"rank": rank, "doc_path": doc_path, "chunk_index": chunk_index,
-            "rerank_score": 0.5, "expected": expected, "text_match": text_match}
+            "rerank_score": 0.5, "expected": expected, "text_match": text_match,
+            "content_sha256": content_sha256}
 
 
 # ---------- Round 3, Rule 1: attribution requires the SAME CANDIDATE SET,
@@ -512,6 +514,121 @@ def test_compare_raises_on_legacy_files_with_differing_query_at_index():
     with pytest.raises(ValueError) as exc_info:
         dd.compare(base_details, other_details)
     assert "0" in str(exc_info.value)          # the index is named in the message
+
+
+def test_compare_raises_when_hashless_files_have_different_index_sets():
+    """Round 4, Rule 3: a strict-subset query set must be refused even
+    though every SHARED index's query string matches -- the old fallback
+    silently ignored indices present on only one side."""
+    dd = _load("eval_details_diff_r4_rule3", "eval/details_diff.py")
+    base_details = {"cell": {"models": {"embedder": "e"}, "mode": "live"}, "queries": [
+        {"index": 0, "query": "q0"}, {"index": 1, "query": "q1"}, {"index": 2, "query": "q2"}]}
+    other_details = {"cell": {"models": {"embedder": "e"}, "mode": "live"}, "queries": [
+        {"index": 0, "query": "q0"}, {"index": 1, "query": "q1"}]}   # strict subset -- missing index 2
+    with pytest.raises(ValueError) as exc_info:
+        dd.compare(base_details, other_details)
+    msg = str(exc_info.value)
+    assert "3" in msg and "2" in msg           # counts on each side (3 vs 2)
+
+
+# ---------- Round 4: candidate identity includes CONTENT, classify escalates
+# to full ranks on a top-k tie ----------
+
+def test_build_detail_record_content_sha256_prefers_row_content_hash():
+    """store.py's schema carries `content_hash` on every in-process
+    raw_results row (sha256 of the normalized chunk text, computed once at
+    ingest) -- build_detail_record must reuse it rather than re-hashing,
+    truncated to the first 16 hex chars."""
+    ev = _load("eval_evaluate_r4_content_hash_a", "eval/evaluate.py")
+    full_hash = "abc123def4567890" * 4
+    raw_results = [{"doc_path": "c:/r/p/docs/a.md", "chunk_index": 0, "heading": "",
+                    "text": "hello world", "content_hash": full_hash}]
+    reranked = [(0, 0.9)]
+    judged = ev.judge_query(raw_results, reranked, "a.md", "")
+
+    record = ev.build_detail_record(0, {"query": "q", "expected_file": "a.md"}, raw_results,
+                                    reranked, judged, has_pool=True, full_reranked=reranked)
+
+    assert record["top"][0]["content_sha256"] == full_hash[:16]
+    assert record["full_order"][0]["content_sha256"] == full_hash[:16]
+
+
+def test_build_detail_record_hashes_text_when_content_hash_missing():
+    """The --daemon path's normalized rows carry no `content_hash` (never
+    on the wire) -- fall back to hashing `text` at record time."""
+    ev = _load("eval_evaluate_r4_content_hash_b", "eval/evaluate.py")
+    import hashlib
+    raw_results = [{"doc_path": "c:/r/p/docs/a.md", "chunk_index": 0, "heading": "", "text": "hello world"}]
+    reranked = [(0, 0.9)]
+    judged = ev.judge_query(raw_results, reranked, "a.md", "")
+
+    record = ev.build_detail_record(0, {"query": "q", "expected_file": "a.md"}, raw_results,
+                                    reranked, judged, has_pool=True, full_reranked=reranked)
+
+    expected = hashlib.sha256(b"hello world").hexdigest()[:16]
+    assert record["top"][0]["content_sha256"] == expected
+    assert record["full_order"][0]["content_sha256"] == expected
+
+
+def test_diff_records_treats_same_path_and_chunk_but_different_content_as_pool_differs():
+    """Round 4, Rule 1: (doc_path, chunk_index) alone survives a doc
+    edit + re-index -- the reranker saw DIFFERENT text even though the
+    positional identity looks unchanged. content_sha256 must break the
+    false match."""
+    dd = _load("eval_details_diff_r4_rule1", "eval/details_diff.py")
+    base_full_order = [_full_order_entry("a.md", 0, content_sha256="hash-before"),
+                       _full_order_entry("b.md", 1, rank=2)]
+    other_full_order = [_full_order_entry("a.md", 0, content_sha256="hash-AFTER-edit"),  # same path+chunk!
+                        _full_order_entry("b.md", 1, rank=2)]
+    common_pool = {"size": 2, "expected_in_pool": True, "expected_best_pool_rank": 1,
+                   "expected_text_in_pool": True, "expected_text_pool_rank": 1}
+    base_q = [{"index": 0, "expected_file": "a.md", "found_rank": 1, "text_match_at_1": True,
+               "expected_full_rank": 1, "expected_text_full_rank": 1,
+               "pool": common_pool, "full_order": base_full_order}]
+    other_q = [{"index": 0, "expected_file": "a.md", "found_rank": 2, "text_match_at_1": False,
+                "expected_full_rank": 2, "expected_text_full_rank": 2,
+                "pool": common_pool, "full_order": other_full_order}]
+
+    rows = dd.diff_records(base_q, other_q, params_match=True)
+    assert len(rows) == 1
+    assert rows[0]["pool_identity"] == "differs"
+    assert rows[0]["class"] != "RERANKER"
+    assert rows[0]["reason"] == "pool: differs"
+
+
+def test_diff_records_treats_full_order_missing_content_sha256_as_unrecorded():
+    """A record whose full_order predates Round 4 (no content_sha256 at
+    all) must not be silently treated as identical just because doc_path/
+    chunk_index still line up."""
+    dd = _load("eval_details_diff_r4_rule1b", "eval/details_diff.py")
+    legacy_entry = {"rank": 1, "doc_path": "a.md", "chunk_index": 0, "rerank_score": 0.5,
+                    "expected": True, "text_match": False}          # no content_sha256 key
+    common_pool = {"size": 1, "expected_in_pool": True, "expected_best_pool_rank": 1,
+                   "expected_text_in_pool": False, "expected_text_pool_rank": None}
+    base_q = [{"index": 0, "expected_file": "a.md", "found_rank": 1, "text_match_at_1": False,
+               "expected_full_rank": 1, "expected_text_full_rank": None,
+               "pool": common_pool, "full_order": [legacy_entry]}]
+    other_q = [{"index": 0, "expected_file": "a.md", "found_rank": 2, "text_match_at_1": False,
+                "expected_full_rank": 2, "expected_text_full_rank": None,
+                "pool": common_pool, "full_order": [_full_order_entry("a.md", 0)]}]
+
+    rows = dd.diff_records(base_q, other_q, params_match=True)
+    assert rows[0]["pool_identity"] == "unrecorded"
+    assert rows[0]["reason"] == "pool: unrecorded"
+
+
+def test_classify_escalates_to_full_rank_when_found_rank_ties():
+    """Round 4, Rule 2: found_rank tied at None (neither run's top-3 window
+    contains the file) must not silently fall through to POOL_RANK/OTHER --
+    the FULL rank moving from 4 to 20 is exactly the regression --details
+    exists to surface."""
+    dd = _load("eval_details_diff_r4_rule2", "eval/details_diff.py")
+    common_pool = {"expected_in_pool": True, "expected_best_pool_rank": 1}
+    base = {"found_rank": None, "expected_full_rank": 4, "pool": common_pool}
+    other = {"found_rank": None, "expected_full_rank": 20, "pool": common_pool}
+
+    assert dd.classify(base, other) == "RERANKER"
+    assert dd.classify(other, base) == "RECOVERED"
 
 
 # ---------- 4. --details writer round-trips ----------
