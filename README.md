@@ -39,7 +39,7 @@ Activate it with `.venv\Scripts\Activate.ps1` in PowerShell, or `source .venv/bi
 
 </details>
 
-These instructions install current `main`, where Harrier and the v2 daemon are the defaults. The original `v2.0.0a1` release download predates that change; see [migration and legacy v1](docs/PREVIEW_RELEASE.md).
+These instructions install current `main`, where Harrier and the v2 daemon are the defaults. Artifact `v2.0.0a1` shipped the prior model stack (Qwen embeddings); see [migration, release notes, and legacy v1](docs/PREVIEW_RELEASE.md).
 
 ### 2. Choose your projects
 
