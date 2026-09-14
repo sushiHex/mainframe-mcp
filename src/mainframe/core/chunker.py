@@ -30,6 +30,14 @@ def _estimate_tokens(text: str) -> int:
     return int(len(text.split()) * TOKENS_PER_WORD)
 
 
+def _heading_is_dropped(heading: str, patterns: list) -> bool:
+    """True when `heading` matches any already-COMPILED `drop_headings`
+    pattern. `re.search`, not `match`, so a pattern need not be anchored —
+    the maintainer's own patterns (chunker.drop_headings in config.py)
+    typically are anchored themselves."""
+    return any(p.search(heading) for p in patterns)
+
+
 def _find_code_blocks(text: str) -> list[tuple[int, int]]:
     """Return (start, end) char offsets of fenced code blocks."""
     blocks = []
@@ -120,6 +128,7 @@ def chunk_markdown(
     text: str,
     max_tokens: int = DEFAULT_CHUNK_TOKENS,
     overlap_ratio: float = DEFAULT_OVERLAP_RATIO,
+    drop_headings: list[str] | None = None,
 ) -> list[Chunk]:
     """Chunk markdown text respecting headers and code blocks.
 
@@ -128,9 +137,19 @@ def chunk_markdown(
     2. If a section exceeds max_tokens, recursively split on paragraph boundaries
     3. Never split inside fenced code blocks
     4. Apply overlap between chunks
+
+    `drop_headings`: raw regex pattern strings (chunker.drop_headings in
+    config.py — corpus policy, e.g. generated run-telemetry sections, not a
+    quality knob). Compiled ONCE here, never per section. A section whose
+    HEADING matches any pattern is dropped entirely, before it ever becomes a
+    Chunk — surviving sections keep their text/heading/order unchanged and
+    are simply renumbered contiguously. Empty/None (the default) changes
+    nothing.
     """
     if not text.strip():
         return []
+
+    drop_patterns = [re.compile(p) for p in drop_headings] if drop_headings else []
 
     code_blocks = _find_code_blocks(text)
     overlap_tokens = int(max_tokens * overlap_ratio)
@@ -194,6 +213,13 @@ def chunk_markdown(
         else:
             merged_sections.append(("(merged)", pending_prefix, pending_start))
     sections = merged_sections
+
+    # Corpus-policy filter: drop whole sections whose heading matches a
+    # configured pattern (generated run-telemetry, not real knowledge) before
+    # any of them become chunks — dropped text never reaches hashing,
+    # embedding or FTS.
+    if drop_patterns:
+        sections = [s for s in sections if not _heading_is_dropped(s[0], drop_patterns)]
 
     # Chunk each section
     all_chunks = []

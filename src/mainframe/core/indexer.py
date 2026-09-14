@@ -85,7 +85,8 @@ def prepare_document(lf: LaneFile, chunk_cfg: dict, embedder, known_hash: str | 
     body_offset = len(text) - len(body)
     try:
         chunks = chunk_markdown(body, max_tokens=chunk_cfg.get("chunk_size", 256),
-                                overlap_ratio=chunk_cfg.get("overlap_ratio", 0.35))
+                                overlap_ratio=chunk_cfg.get("overlap_ratio", 0.35),
+                                drop_headings=chunk_cfg.get("drop_headings"))
     except Exception as e:
         return DocFailure(lf.path, f"chunk: {e}")
     if not chunks:

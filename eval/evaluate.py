@@ -687,7 +687,11 @@ def main():
             # constants, so the reported params and the actual chunking must
             # come from the same source or a sweep silently measures nothing.
             chunk_cfg = {"chunk_size": CHUNK_SIZE, "overlap_ratio": OVERLAP_RATIO,
-                        "min_section_tokens": MIN_SECTION_TOKENS}
+                        "min_section_tokens": MIN_SECTION_TOKENS,
+                        # Not a sweep knob like the constants above — this is
+                        # corpus policy, so the harness reads it from the live
+                        # config (the gate must see what production sees).
+                        "drop_headings": config["chunker"].get("drop_headings", [])}
             rows = rebuild_index(store, embedder, files, chunk_cfg)
             t2 = time.time()
             print(f"Index built: {rows} rows in {t2-t1:.1f}s", file=sys.stderr)
@@ -710,6 +714,7 @@ def main():
             "chunk_size": CHUNK_SIZE, "overlap_ratio": OVERLAP_RATIO,
             "min_section_tokens": MIN_SECTION_TOKENS, "fetch_multiplier": FETCH_MULTIPLIER,
             "candidate_pool": CANDIDATE_POOL, "rerank_top_k": RERANK_TOP_K,
+            "drop_headings": config["chunker"].get("drop_headings", []),
         }
         results["models"] = {"embedder": embedder.model_name, "reranker": reranker.model_name}
         results["timing"] = {"model_load": t1 - t0, "ingest": t2 - t1, "eval": t3 - t2, "total": t3 - t0}

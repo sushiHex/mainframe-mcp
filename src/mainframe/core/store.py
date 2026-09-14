@@ -130,6 +130,15 @@ class Store:
             "strip_frontmatter": bool(chunker.get("strip_frontmatter", False)),
             "contextual": bool(config.get("contextual", {}).get("enabled", False)),
         }
+        # drop_headings decides which ROWS exist at all, so it belongs in the
+        # fingerprint too. Stored sorted: the filter's meaning is set-like, so
+        # reordering a user's patterns is not a real change. Included only
+        # when non-empty so an empty list (today's default) fingerprints
+        # IDENTICALLY to a config from before this key existed — upgrading
+        # must never force a rebuild on its own.
+        drop_headings = sorted(chunker.get("drop_headings") or [])
+        if drop_headings:
+            fingerprint["drop_headings"] = drop_headings
         from mainframe.core.encoding import native_contract
         contract = native_contract(config)
         if contract:
