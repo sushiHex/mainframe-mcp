@@ -74,7 +74,7 @@ class Reranker:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
         self._backend = detect_backend(self.model_name, cfg.get("backend"))
-        self.instruction = cfg.get("instruction", _QWEN3_DEFAULT_INSTRUCTION)
+        self.instruction = cfg.get("instruction") or _QWEN3_DEFAULT_INSTRUCTION
         self.revision = cfg.get("revision")
         self.quantize = cfg.get("quantize", False)  # qwen3-logit only: opt-in NF4 on CUDA
 

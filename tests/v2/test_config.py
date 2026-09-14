@@ -147,6 +147,23 @@ def test_reranker_quantization_can_be_configured_in_json(tmp_path, monkeypatch):
     assert DEFAULTS["reranker"]["quantize"] is False
 
 
+def test_reranker_instruction_can_be_configured_in_json(tmp_path):
+    """`reranker.py` has read `cfg.get("instruction", ...)` since native Qwen3
+    scoring landed, but DEFAULTS never defined the key — so the typo guard in
+    `_deep_merge` refused it as unknown, and the documented knob was
+    unreachable from a user config. DEFAULTS default is None (the model's
+    built-in instruction); a string overrides it for every query."""
+    assert DEFAULTS["reranker"]["instruction"] is None
+
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"reranker": {
+        "instruction": "Given a legal contract clause, retrieve the passage that defines it",
+    }}), encoding="utf-8")
+    config = load_config(path)
+    assert config["reranker"]["instruction"] == (
+        "Given a legal contract clause, retrieve the passage that defines it")
+
+
 def test_a_broken_config_refuses_instead_of_widening_the_scope(tmp_path, monkeypatch):
     """A truncated file used to log a warning and fall back to DEFAULTS — where
     `include_projects` is empty, i.e. EVERY project under repos_dir. A daemon
