@@ -185,12 +185,14 @@ tuning informed by these results needs a new, unseen final validation set.
 The comparisons above score frozen labels on public and working samples. The
 repository's composite gate is different: `eval/evaluate.py --rebuild
 --corpus-manifest <manifest> --min-score <gate>` on the maintainer's own
-corpus (725 files, 50 private queries, hybrid pool of 20, three returned
+corpus (725 files, ~50 private queries, hybrid pool of 20, three returned
 chunks), scored as `0.4 * MRR + 0.3 * hit@1 + 0.3 * text_match@1`. Issue #25
 carries the full record; this section states what it settled.
 
 Measured on public `main` with the per-query harness of #28, both indexes built
-from byte-identical files and every cell reproduced exactly on re-score:
+from byte-identical files and every cell reproduced exactly on re-score. These
+four cells share one query set, so they compare with each other; the absolute
+level of all four is corrected further down:
 
 | index (embedder) | Qwen3-Reranker-0.6B BF16 | Qwen3-Reranker-4B NF4 |
 |---|---|---|
@@ -209,10 +211,9 @@ Consequences:
 
 - The default pairing stays Harrier with Qwen3-Reranker-0.6B. Placing the 4B
   behind Harrier is a measured loss, not an upgrade.
-- The gate is re-based to the default pairing: `--min-score 0.36` (the
-  measured 0.3647 rounded down, the same convention that set 0.39 from
-  0.3967). Relative to the a1 pairing this is -8.1% composite for about a
-  third of the VRAM; the trade is stated here so it is chosen, not inherited.
+- The gate stays `--min-score 0.39` for the default pairing. An earlier revision
+  of this section re-based it to 0.36 from the 0.3647 above; that was correct for
+  the query set as it then stood and is superseded by the correction below.
 - Candidate-pool width does not repair it: under the 0.6B on Harrier's index,
   pools of 5, 10, 15, 20 and 40 score 0.343, 0.375, 0.365, 0.365 and 0.368.
   The pool-10 peak is one query and sits between two lower neighbours.
@@ -225,6 +226,29 @@ Consequences:
   model card's web-search instruction 0.3560; an "ignore logs, metrics footers and
   boilerplate" variant 0.3333; a "prefer the project's own conventions over
   reports" variant 0.3233. Keep the default.
+
+### Correction: most of the gap was label rot
+
+Auditing the queries that no embedder could reach found that three of them carried
+labels which were wrong as a matter of fact — two named a path that had been renamed
+out from under them, and one expected a document that says nothing on the subject
+asked about — while a fourth expected a document that no longer exists in the corpus
+at all, so it measured corpus loss rather than retrieval. Corrected (the fourth
+retired, the other three repointed at the documents that do answer them):
+
+| query set | n | composite | hit@1 | hit@3 | MRR | text@1 |
+|---|---|---|---|---|---|---|
+| as measured in the table above | 50 | 0.3647 | 17 | 29 | 0.4467 | 14 |
+| retiring the unanswerable query only | 49 | 0.3721 | 17 | 29 | 0.4558 | 14 |
+| + the three factual label fixes | 49 | **0.3966** | 18 | 31 | 0.4864 | 15 |
+
+So the default pairing measures 0.3966 on honest labels and clears the original
+0.39 gate. Queries whose expected document genuinely contains the answer were left
+alone even where another document answers as well: moving those labels onto
+whatever the retriever returned would fit the labels to the model. All four
+corrections were misses under both embedders, so this lifts every cell in the table
+above rather than changing which of them wins — the comparison stands, its absolute
+level was understated.
 
 Any change to the default pairing or the gate needs the composite gate run on
 the maintainer corpus and an unseen validation set, as the interpretation
