@@ -179,3 +179,53 @@ therefore adds complete-fact rubrics and masked agent passage review. Its
 results select the Qwen 0.6B default contract under the fixed top-three policy.
 Training was unnecessary under the frozen promotion criteria. Any future
 tuning informed by these results needs a new, unseen final validation set.
+
+## Composite gate on the maintainer corpus
+
+The comparisons above score frozen labels on public and working samples. The
+repository's composite gate is different: `eval/evaluate.py --rebuild
+--corpus-manifest <manifest> --min-score <gate>` on the maintainer's own
+corpus (725 files, 50 private queries, hybrid pool of 20, three returned
+chunks), scored as `0.4 * MRR + 0.3 * hit@1 + 0.3 * text_match@1`. Issue #25
+carries the full record; this section states what it settled.
+
+Measured on public `main` with the per-query harness of #28, both indexes built
+from byte-identical files and every cell reproduced exactly on re-score:
+
+| index (embedder) | Qwen3-Reranker-0.6B BF16 | Qwen3-Reranker-4B NF4 |
+|---|---|---|
+| Harrier 0.6B (default) | **0.3647** | 0.3353 |
+| Qwen3-Embedding-8B INT8 (v2.0.0a1 default) | 0.3300 | **0.3873** |
+
+The two rerankers disagree about which pool they rank well: the 4B is +0.057
+on the Qwen3-Embedding-8B pool and -0.029 on Harrier's; Harrier is +0.035 under
+the 0.6B and -0.052 under the 4B. Harrier's pool holds the expected file for
+41 of 50 queries against 38 for Qwen3-Embedding-8B, and eight queries are
+absent from both pools at any width tried. The historical 0.3967 of the a1
+stack used a 4B INT8 load that current code no longer offers; the a1 pairing
+under NF4 reaches 0.3873 at roughly twelve GiB.
+
+Consequences:
+
+- The default pairing stays Harrier with Qwen3-Reranker-0.6B. Placing the 4B
+  behind Harrier is a measured loss, not an upgrade.
+- The gate is re-based to the default pairing: `--min-score 0.36` (the
+  measured 0.3647 rounded down, the same convention that set 0.39 from
+  0.3967). Relative to the a1 pairing this is -8.1% composite for about a
+  third of the VRAM; the trade is stated here so it is chosen, not inherited.
+- Candidate-pool width does not repair it: under the 0.6B on Harrier's index,
+  pools of 5, 10, 15, 20 and 40 score 0.343, 0.375, 0.365, 0.365 and 0.368.
+  The pool-10 peak is one query and sits between two lower neighbours.
+- Other embedders under the 0.6B reranker land in the same place: Qwen3-Embedding-0.6B
+  (legacy Instruct prefix, unquantized) 0.3687 and Qwen3-Embedding-4B (INT8) 0.3680
+  against Harrier's 0.3647 — one query apart. The embedder is not the lever on this
+  corpus; the reranker-pool pairing is.
+- Reranker instruction wording (settable via `reranker.instruction`) does not
+  help either: the shipped technical-documentation instruction scores 0.3647; the
+  model card's web-search instruction 0.3560; an "ignore logs, metrics footers and
+  boilerplate" variant 0.3333; a "prefer the project's own conventions over
+  reports" variant 0.3233. Keep the default.
+
+Any change to the default pairing or the gate needs the composite gate run on
+the maintainer corpus and an unseen validation set, as the interpretation
+above already requires for tuning.
