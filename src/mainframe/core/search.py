@@ -10,16 +10,6 @@ MAX_RESULTS = 10
 SNIPPET_CHARS = 200
 TEXT_CHARS = 500
 
-# The complete `confidence` vocabulary `search()` can emit. Reranker backends
-# expose incompatible scoring scales — some bounded probabilities, some
-# unbounded logits — so PR #17 removed the absolute "high"/"low" threshold in
-# favor of these two states. This is the one place that vocabulary is
-# declared; skills/mainframe-retrieval/SKILL.md is checked against it in
-# tests/v2/test_skill_search_contract.py so the two cannot drift apart again.
-CONFIDENCE_NONE = "none"
-CONFIDENCE_UNAVAILABLE = "unavailable"
-CONFIDENCE_VALUES = frozenset({CONFIDENCE_NONE, CONFIDENCE_UNAVAILABLE})
-
 _EMPTY_GUIDANCE = ("No matches. Rephrase with SPECIFIC technical terms (function/class/proper "
                    "names, exact config keys, error strings) — natural-language questions rank "
                    "poorly. Or set include_sessions=true to also search raw session captures.")
@@ -77,16 +67,26 @@ class SearchService:
         q = self.models.invoke("embedder", lambda e: e.embed_query(query))
         raw = self.store.search(q, top_k=pool, include_captures=include_sessions, query_text=query)
         if not raw:
-            return {"results": [], "confidence": CONFIDENCE_NONE, "guidance": _EMPTY_GUIDANCE}
+            return {"results": [], "ranked_by": None, "guidance": _EMPTY_GUIDANCE}
         texts = [r["text"] for r in raw]
         headings = [r.get("heading", "") for r in raw]
-        ranked = self.models.invoke("reranker", lambda r: r.rerank(query, texts, top_k=limit, headings=headings))
+        # `ranked_by` and the ordering MUST come from the same invoke: a second
+        # call to ask "which model?" would take the model lock twice and could
+        # name a different model than the one that actually ranked, if a
+        # reload happened between the two calls. `r.model_name` is the honest
+        # identity Reranker already carries; `r.enabled` is False only when
+        # the backend is administratively disabled, in which case rerank()
+        # returns candidate order with every score 0.0 (see
+        # tests/v2/test_reranker.py::test_disabled_reranker_keeps_candidate_order)
+        # and nothing ranked the results, so `ranked_by` must be null.
+        ranked, ranked_by = self.models.invoke(
+            "reranker",
+            lambda r: (r.rerank(query, texts, top_k=limit, headings=headings),
+                       r.model_name if r.enabled else None),
+        )
         results = [self._shape(raw[i], float(s), response_format) for i, s in ranked]
         self._add_line_spans(raw, ranked, results)
-        # Reranker scores are model-native ordering signals. Some backends
-        # expose probabilities while others expose unbounded logits, so an
-        # absolute threshold cannot represent confidence across backends.
-        return {"results": results, "confidence": CONFIDENCE_UNAVAILABLE}
+        return {"results": results, "ranked_by": ranked_by}
 
     @staticmethod
     def _shape(row: dict, score: float, fmt: str) -> dict:
