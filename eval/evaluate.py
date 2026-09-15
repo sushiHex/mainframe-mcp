@@ -98,7 +98,7 @@ def rebuild_index(store, embedder, files, chunk_cfg, batch_size: int = 50) -> in
     for i in range(0, len(files), batch_size):
         docs = []
         for lf in files[i:i + batch_size]:
-            d = prepare_document(lf, chunk_cfg, embedder)
+            d = prepare_document(lf, chunk_cfg, embedder.embed)
             if d is UNCHANGED or isinstance(d, DocFailure):
                 if isinstance(d, DocFailure):
                     print(f"  skip {d.doc_path}: {d.error}", file=sys.stderr)

@@ -1,4 +1,4 @@
-from mainframe.core.indexer import UNCHANGED, VANISHED, DocFailure, LaneFile, prepare_document
+from mainframe.core.indexer import UNCHANGED, VANISHED, DocFailure, EmbedderUnavailable, LaneFile, prepare_document
 from mainframe.core.paths import canonical, doc_id, chunk_key
 from mainframe.core.store import DocRows
 from v2.helpers import write_md
@@ -13,7 +13,7 @@ def test_rows_carry_identity_and_classification(tmp_path, fake_embedder):
                  "# A\n\nfirst section text with enough words to stand alone here.\n\n"
                  "## B\n\nsecond section text with enough words to stand alone too.\n")
     lf = LaneFile(path=canonical(p), lane="knowledge", project="proj")
-    d = prepare_document(lf, CHUNK, fake_embedder, now="2026-01-01T00:00:00")
+    d = prepare_document(lf, CHUNK, fake_embedder.embed, now="2026-01-01T00:00:00")
     assert isinstance(d, DocRows) and d.doc_id == doc_id(lf.path) and len(d.rows) == 2
     r = d.rows[1]
     assert r["chunk_key"] == chunk_key(d.doc_id, 1) and r["chunk_index"] == 1
@@ -40,33 +40,51 @@ def test_a_device_failure_propagates_but_an_ordinary_one_becomes_a_docfailure(tm
             raise self.exc
 
     with pytest.raises(RuntimeError, match="CUDA error"):
-        prepare_document(lf, CHUNK, Bad(RuntimeError("CUDA error: unknown error")))
+        prepare_document(lf, CHUNK, Bad(RuntimeError("CUDA error: unknown error")).embed)
 
-    ordinary = prepare_document(lf, CHUNK, Bad(ValueError("token id out of range")))
+    ordinary = prepare_document(lf, CHUNK, Bad(ValueError("token id out of range")).embed)
     assert isinstance(ordinary, DocFailure) and "embed: token id out of range" in ordinary.error
+
+
+def test_embedder_unavailable_propagates_unlike_an_ordinary_failure(tmp_path, fake_embedder):
+    """`EmbedderUnavailable` is the `embed` callable's own way of saying the
+    model was never resolved at all (see `core/pipeline.py`'s `embed`
+    closure) — it must propagate exactly like a device fault, never becoming
+    a `DocFailure`, even though its message matches no CUDA/driver pattern
+    `is_device_failure` would recognize."""
+    import pytest
+
+    p = write_md(tmp_path / "a.md", "# A\n\nbody text here.\n")
+    lf = LaneFile(path=canonical(p), lane="knowledge", project="x")
+
+    def unavailable(texts):
+        raise EmbedderUnavailable("embedder unavailable: no weights on disk; retry in 900s")
+
+    with pytest.raises(EmbedderUnavailable, match="no weights on disk"):
+        prepare_document(lf, CHUNK, unavailable)
 
 
 def test_unchanged_when_hash_matches(tmp_path, fake_embedder):
     p = write_md(tmp_path / "a.md", "# A\n\nbody text here.\n")
     lf = LaneFile(path=canonical(p), lane="knowledge", project="x")
-    first = prepare_document(lf, CHUNK, fake_embedder)
-    assert prepare_document(lf, CHUNK, fake_embedder, known_hash=first.rows[0]["file_hash"]) is UNCHANGED
+    first = prepare_document(lf, CHUNK, fake_embedder.embed)
+    assert prepare_document(lf, CHUNK, fake_embedder.embed, known_hash=first.rows[0]["file_hash"]) is UNCHANGED
 
 
 def test_empty_file_yields_no_rows(tmp_path, fake_embedder):
     p = write_md(tmp_path / "e.md", "   \n\n")
-    d = prepare_document(LaneFile(canonical(p), "knowledge", "x"), CHUNK, fake_embedder)
+    d = prepare_document(LaneFile(canonical(p), "knowledge", "x"), CHUNK, fake_embedder.embed)
     assert isinstance(d, DocRows) and d.rows == []
 
 
 def test_missing_file_is_vanished(tmp_path, fake_embedder):
     lf = LaneFile(canonical(tmp_path / "missing.md"), "knowledge", "x")
-    assert prepare_document(lf, CHUNK, fake_embedder) is VANISHED
+    assert prepare_document(lf, CHUNK, fake_embedder.embed) is VANISHED
 
 
 def test_capture_lane_is_scrubbed_and_typed_session(tmp_path, fake_embedder):
     p = write_md(tmp_path / "c.md", "# S\n\n## Summary\nuse api_key=example-body now.\n")
-    d = prepare_document(LaneFile(canonical(p), "capture", "proj"), CHUNK, fake_embedder)
+    d = prepare_document(LaneFile(canonical(p), "capture", "proj"), CHUNK, fake_embedder.embed)
     assert d.rows[0]["source_type"] == "session" and d.rows[0]["lane"] == "capture"
     assert "example-body" not in d.rows[0]["text"] and "[REDACTED]" in d.rows[0]["text"]
 
@@ -77,7 +95,7 @@ def test_contextualizer_prefix_applied(tmp_path, fake_embedder):
         def contextualize(self, doc, chunks):
             return ["CTX for chunk"] * len(chunks)
     p = write_md(tmp_path / "a.md", "# A\n\nbody text here.\n")
-    d = prepare_document(LaneFile(canonical(p), "knowledge", "x"), CHUNK, fake_embedder, contextualizer=Ctx())
+    d = prepare_document(LaneFile(canonical(p), "knowledge", "x"), CHUNK, fake_embedder.embed, contextualizer=Ctx())
     assert d.rows[0]["text"].startswith("CTX for chunk\n\n")
 
 
@@ -87,7 +105,7 @@ def test_raising_contextualizer_degrades_to_plain_chunks(tmp_path, fake_embedder
         def contextualize(self, doc, chunks):
             raise RuntimeError("api down")
     p = write_md(tmp_path / "a.md", "# A\n\nbody text here.\n")
-    d = prepare_document(LaneFile(canonical(p), "knowledge", "x"), CHUNK, fake_embedder, contextualizer=Boom())
+    d = prepare_document(LaneFile(canonical(p), "knowledge", "x"), CHUNK, fake_embedder.embed, contextualizer=Boom())
     assert isinstance(d, DocRows) and d.rows[0]["text"] == "# A\n\nbody text here."
 
 
@@ -98,7 +116,7 @@ def test_frontmatter_kept_by_default(tmp_path, fake_embedder, cfg):
     text = "---\ntype: note\nproject: p\n---\n\n# T\n\nbody text here.\n"
     p = write_md(tmp_path / "n.md", text)
     lf = LaneFile(canonical(p), "knowledge", "p")
-    d = prepare_document(lf, cfg["chunker"], fake_embedder)
+    d = prepare_document(lf, cfg["chunker"], fake_embedder.embed)
     assert isinstance(d, DocRows) and any("type: note" in r["text"] for r in d.rows)
 
 
@@ -107,7 +125,7 @@ def test_strip_frontmatter_flag_excludes_it_and_keeps_offsets_aligned(tmp_path, 
     p = write_md(tmp_path / "n.md", text)
     lf = LaneFile(canonical(p), "knowledge", "p")
     chunk_cfg = dict(cfg["chunker"], strip_frontmatter=True)
-    d = prepare_document(lf, chunk_cfg, fake_embedder)
+    d = prepare_document(lf, chunk_cfg, fake_embedder.embed)
     assert isinstance(d, DocRows) and not any("type: note" in r["text"] for r in d.rows)
     # chunk_markdown stores each chunk's .strip()ped text but char_start/char_end
     # span the UNSTRIPPED section — a pre-existing chunker property, not
