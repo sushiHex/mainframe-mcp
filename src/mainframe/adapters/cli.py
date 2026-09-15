@@ -10,6 +10,8 @@ import urllib.parse
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+import httpx
+
 from mainframe.config import load_config
 from mainframe.service.daemon import LOCK_HELD_EXIT, Daemon, lock_path
 from mainframe.service.discovery import probe, read_discovery
@@ -110,19 +112,31 @@ def run_offline_rebuild(config: dict, app=None) -> dict:
 
 
 def _emit(obj):
-    print(json.dumps(obj, indent=2, ensure_ascii=False))
+    # ensure_ascii=True on purpose: the payload is document content (headings,
+    # snippets) that routinely carries an arrow, an em dash, or other non-ASCII
+    # text, and a Windows console is routinely cp1252 — printing raw non-ASCII
+    # there is the same UnicodeEncodeError the messages-are-ASCII rule above
+    # exists to avoid. Escaping to \uXXXX keeps the JSON valid and always
+    # encodable, without reconfiguring stdout globally.
+    print(json.dumps(obj, indent=2, ensure_ascii=True))
 
 
 def _call(fn) -> int:
     """Run one daemon REST call (± an `_emit` of its result); a daemon that
-    dies between the `/healthz` probe and this call raises a raw httpx/network
-    error, which we translate into one clean stderr line instead of a
-    traceback. Single choke point — subcommands route their dispatch through
-    here rather than each carrying its own try/except."""
+    dies between the `/healthz` probe and this call raises a transport error,
+    which we translate into one clean stderr line instead of a traceback.
+    Single choke point — subcommands route their dispatch through here rather
+    than each carrying its own try/except. Only actual connection/transport
+    failures are reported as "could not reach the daemon" — anything else
+    (a bug in handling an otherwise-successful response, say) surfaces with
+    its own message instead of being mislabeled as connectivity."""
     try:
         fn()
-    except Exception as e:
+    except (httpx.TransportError, ConnectionError) as e:
         print(f"mainframe: could not reach the daemon ({e})", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"mainframe: {e}", file=sys.stderr)
         return 1
     return 0
 

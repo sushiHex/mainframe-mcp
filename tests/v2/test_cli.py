@@ -60,6 +60,31 @@ class RaisingHTTP:
         raise ConnectionError("reset")
 
 
+class BrokenHTTP:
+    """Alive at /healthz, but the real response is unusable for a reason that
+    has nothing to do with reaching the daemon (e.g. a malformed body) — this
+    must surface with its own message, not the connectivity one."""
+    def __init__(self, nonce):
+        self.nonce = nonce
+
+    def get(self, url, **kw):
+        if url.endswith("/healthz"):
+            nonce = self.nonce
+            class R:
+                status_code = 200
+                def json(self_inner):
+                    return {"ok": True, "nonce": nonce}
+            return R()
+
+        class R:
+            status_code = 200
+            def raise_for_status(self_inner):
+                pass
+            def json(self_inner):
+                raise ValueError("boom: malformed response body")
+        return R()
+
+
 def _up(cfg, nonce="n1"):
     write_discovery(cfg, 1234, nonce)
     return {("GET", "/healthz"): lambda b: {"ok": True, "nonce": nonce}}
@@ -180,6 +205,39 @@ def test_daemon_unreachable_mid_command(cfg, capsys):
     http = RaisingHTTP("n1")
     assert cli.main(["status"], config=cfg, http=http) == 1
     assert "could not reach the daemon" in capsys.readouterr().err
+
+
+def test_emit_is_ascii_safe_and_round_trips(capsys):
+    """Document content (a heading, a snippet) can carry an arrow, an em dash,
+    or any other non-cp1252 character. `_emit` must still print something a
+    Windows cp1252 console can encode, and it must stay valid JSON that
+    round-trips to the exact original string."""
+    payload = {"results": [{"snippet": "lock → discovery — write"}]}
+    cli._emit(payload)
+    out = capsys.readouterr().out
+    out.encode("cp1252")               # must not raise UnicodeEncodeError
+    assert json.loads(out) == payload
+
+
+def test_call_reports_connectivity_error_as_unreachable(cfg, capsys):
+    """A real connection/transport failure still gets the connectivity
+    message — this is the one case that message is accurate for."""
+    write_discovery(cfg, 1234, "n1")
+    http = RaisingHTTP("n1")
+    assert cli.main(["status"], config=cfg, http=http) == 1
+    assert "could not reach the daemon" in capsys.readouterr().err
+
+
+def test_call_reports_non_connectivity_error_with_its_own_message(cfg, capsys):
+    """The daemon answered fine; something else broke while handling the
+    result (e.g. a printing/encoding bug). That must not be blamed on
+    reachability — it should surface with its own message."""
+    write_discovery(cfg, 1234, "n1")
+    http = BrokenHTTP("n1")
+    assert cli.main(["status"], config=cfg, http=http) == 1
+    err = capsys.readouterr().err
+    assert "could not reach the daemon" not in err
+    assert "boom: malformed response body" in err
 
 
 def test_down_is_idempotent_when_daemon_not_running(cfg, capsys):
