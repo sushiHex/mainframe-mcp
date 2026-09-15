@@ -24,7 +24,8 @@
   "chunker": {
     "chunk_size": 512,
     "overlap_ratio": 0.25,
-    "min_section_tokens": 10
+    "min_section_tokens": 10,
+    "drop_headings": []
   },
   "search": {
     "fetch_multiplier": 4,

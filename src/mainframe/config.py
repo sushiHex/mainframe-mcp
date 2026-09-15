@@ -5,6 +5,7 @@ shape so the kept modules and the shipped presets read them unchanged."""
 import json
 import logging
 import os
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,13 @@ DEFAULTS = {
     "nli": {"model": "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli", "enabled": False,
             "threshold": 0.7},
     "models": {"retry_minutes": 15},
-    "chunker": {"chunk_size": 256, "overlap_ratio": 0.35, "strip_frontmatter": False},
+    "chunker": {"chunk_size": 256, "overlap_ratio": 0.35, "strip_frontmatter": False,
+                # Regex patterns (re.search against the chunk's HEADING) whose
+                # match drops that whole section before hashing/embedding/FTS.
+                # A CORPUS POLICY knob (e.g. generated run-telemetry sections
+                # that are lexically dense but carry no knowledge), not a
+                # quality knob. Empty (default) = identical to today.
+                "drop_headings": []},
     "search": {"candidate_pool": 20, "rerank_top_k": 3, "recency_weight": 0.0,
                "recency_halflife_days": 90},
     "tiers": {"library": 0.90, "project": 0.93, "docs": 0.95, "research": 0.97, "session": 1.05},
@@ -84,6 +91,17 @@ _ENV_OVERRIDES = {
 
 def deep_copy(d: dict) -> dict:
     return json.loads(json.dumps(d))
+
+
+def _validate_drop_headings(chunker: dict) -> None:
+    """Compile every `chunker.drop_headings` pattern at config load, not at
+    ingest: a 45-minute rebuild must not be the thing that discovers a typo."""
+    for pattern in chunker.get("drop_headings") or []:
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            raise ConfigError(
+                f"chunker.drop_headings pattern {pattern!r} does not compile: {e}") from e
 
 
 def _reset_reranker_revision_for_model_change(current: dict, override: dict) -> None:
@@ -207,6 +225,7 @@ def load_config(config_path: Path | None = None) -> dict:
         native_contract(config)
     except ValueError as error:
         raise ConfigError(str(error)) from error
+    _validate_drop_headings(config["chunker"])
     return config
 
 
