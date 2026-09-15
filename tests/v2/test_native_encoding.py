@@ -145,7 +145,7 @@ def test_native_index_blocks_reads_and_writes_when_contract_changes(tmp_path, fa
     config = native_config()
     path = tmp_path / 'document.md'
     path.write_text('# Context\nA useful semantic search document.\n')
-    doc = prepare_document(LaneFile(canonical(path), 'knowledge', 'fixture'), config['chunker'], fake_embedder)
+    doc = prepare_document(LaneFile(canonical(path), 'knowledge', 'fixture'), config['chunker'], fake_embedder.embed)
     store = Store(tmp_path / 'db', fingerprint=Store.fingerprint_from_config(config))
     store.upsert_batch([doc], [])
     config['embedder'].update(change)
@@ -163,7 +163,7 @@ def test_native_identity_survives_loss_of_legacy_sidecar(tmp_path, fake_embedder
     config = native_config()
     path = tmp_path / 'document.md'
     path.write_text('# Context\nUseful documentation.\n')
-    doc = prepare_document(LaneFile(canonical(path), 'knowledge', 'fixture'), config['chunker'], fake_embedder)
+    doc = prepare_document(LaneFile(canonical(path), 'knowledge', 'fixture'), config['chunker'], fake_embedder.embed)
     store = Store(tmp_path / 'db', fingerprint=Store.fingerprint_from_config(config))
     store.upsert_batch([doc], [])
     store._marker_path().unlink()

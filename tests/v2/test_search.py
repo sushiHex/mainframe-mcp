@@ -12,7 +12,7 @@ CHUNK = {"chunk_size": 256, "overlap_ratio": 0.35}
 
 
 def _index(store, embedder, files):
-    docs = [prepare_document(lf, CHUNK, embedder) for lf in files]
+    docs = [prepare_document(lf, CHUNK, embedder.embed) for lf in files]
     store.upsert_batch(docs)
     store.optimize()
 
@@ -63,7 +63,7 @@ def test_merged_capture_citations_need_no_reindex(cfg, store, fake_embedder, fak
             "# Session\n\n# Orchid receipt\n\n"
             "Orchid receipts record immutable diagnostics for the memory lane.\n")
     p = write_md(tmp_path / "mainframe" / "captures" / "p" / "receipt.md", text)
-    doc = prepare_document(LaneFile(canonical(p), "capture", "p"), CHUNK, fake_embedder)
+    doc = prepare_document(LaneFile(canonical(p), "capture", "p"), CHUNK, fake_embedder.embed)
     # Freeze the stored passage produced before this fix: each tiny section
     # adds a newline, so neither its text nor its end offset matches the file.
     legacy_text = text.replace("---\n# Session", "---\n\n# Session").replace(

@@ -5,7 +5,9 @@ Pure with respect to the store: the caller batches DocRows into
 caller leaves it out of the batch (its previous rows survive). A file that
 vanishes before its first read is a distinct outcome so the pipeline can remove
 old rows; a device-level embed failure also propagates rather than being
-reported as a document failure."""
+reported as a document failure — and so does `EmbedderUnavailable`: the
+`embed` callable's way of saying the model itself could not be resolved at
+all, which is never one document's fault either."""
 
 import logging
 from dataclasses import dataclass
@@ -37,6 +39,14 @@ class DocFailure:
     error: str
 
 
+class EmbedderUnavailable(Exception):
+    """Raised by the `embed` callable, never by a model call itself: the
+    registry could not resolve a model to run at all (load failure, or a
+    reload after a device fault that itself failed to load). That is a
+    whole-run problem, not this document's — it must propagate exactly like
+    a device fault does, not become a `DocFailure`."""
+
+
 class _Unchanged:
     def __repr__(self):
         return "UNCHANGED"
@@ -51,7 +61,7 @@ UNCHANGED = _Unchanged()
 VANISHED = _Vanished()
 
 
-def prepare_document(lf: LaneFile, chunk_cfg: dict, embedder, known_hash: str | None = None,
+def prepare_document(lf: LaneFile, chunk_cfg: dict, embed, known_hash: str | None = None,
                      contextualizer=None, now: str | None = None):
     try:
         text = Path(lf.path).read_text(encoding="utf-8")
@@ -105,7 +115,12 @@ def prepare_document(lf: LaneFile, chunk_cfg: dict, embedder, known_hash: str | 
             if cx:
                 c.text = f"{scrub_secrets(cx)}\n\n{c.text}"
     try:
-        embeddings = embedder.embed([c.text for c in chunks])
+        embeddings = embed([c.text for c in chunks])
+    except EmbedderUnavailable:
+        # The registry never resolved a model at all for this call — not this
+        # document's problem, any more than a device fault is. Propagate
+        # exactly like one, same as the branch below.
+        raise
     except Exception as e:
         # A DocFailure says "THIS document is bad", and the caller acts on that
         # by leaving it out of the batch and carrying on. A dead CUDA context is

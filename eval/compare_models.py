@@ -349,10 +349,13 @@ def run(args):
         start = time.perf_counter()
         before = timing()
         if not existing:
+            # Built once, not per document: only the embed call itself needs
+            # the model lock (mirrors core/pipeline.py's IndexPipeline._run_batch).
+            embed = lambda texts: models.invoke("embedder", lambda e: e.embed(texts))
             batch = []
             for i, f in enumerate(sorted(manifest["files"], key=lambda f: canonical(f["path"]))):
                 lf = LaneFile(canonical(f["path"]), "knowledge", f["id"].split("/")[0])
-                doc = models.invoke("embedder", lambda e: prepare_document(lf, config["chunker"], e))
+                doc = prepare_document(lf, config["chunker"], embed)
                 if isinstance(doc, DocFailure) or not doc.rows:
                     raise RuntimeError(f"document failed or empty: {f['id']}")
                 batch.append(doc)

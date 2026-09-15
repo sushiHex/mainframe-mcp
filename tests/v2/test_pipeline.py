@@ -8,6 +8,7 @@ from mainframe.core.paths import canonical
 from mainframe.core.pipeline import IndexPipeline
 from mainframe.memory.lanes import Lanes
 from mainframe.service.events import EventStore
+from v2.conftest import FakeEmbedder
 from v2.fakes import fake_models
 from v2.helpers import write_md
 
@@ -224,6 +225,86 @@ def test_a_failed_ledger_scan_prunes_nothing_and_repairs_itself(cfg, store, tmp_
     assert rep.deleted_docs == 1 and [Path(p).name for p in store.ledger()] == [Path(a).name]
 
 
+class _RecordingModels:
+    """A `Models` stand-in that records every `invoke()` call instead of
+    loading anything: `calls` collects the (role, operation) pairs it was
+    given, in order. `invoke` still runs the operation against `embedder` so
+    the pipeline sees real embeddings and behaves normally around the fake."""
+
+    def __init__(self, embedder):
+        self.embedder = embedder
+        self.calls = []
+
+    def invoke(self, role, operation):
+        self.calls.append((role, operation))
+        return operation(self.embedder)
+
+
+def test_unchanged_document_never_takes_the_model_lock(cfg, store, tmp_path):
+    """The rescan win: `known_hash` is checked before any embedding call, so
+    an unchanged file must never reach `Models.invoke` — today (pre-fix) it
+    is invoked once per file regardless of whether anything changed."""
+    r = Path(cfg["paths"]["repos_dir"]) / "p"
+    a = write_md(r / "docs" / "a.md", "# a\n\nalpha text here.\n")
+    assert _pipe(cfg, store, tmp_path).index([str(a)]).upserted_rows == 1
+
+    recording = _RecordingModels(FakeEmbedder(dim=64))
+    pipe = IndexPipeline(Lanes(cfg), store, recording, cfg, EventStore(tmp_path / "ev2.db"))
+    rep = pipe.index([str(a)])
+
+    assert rep.unchanged == 1
+    assert recording.calls == []
+
+
+def test_only_the_embedding_runs_under_the_lock(cfg, store, tmp_path):
+    """The locked operation is the embed call and nothing else: chunking and
+    contextualizing happen OUTSIDE `Models.invoke`, and what invoke receives,
+    run against any embedder, returns exactly that embedder's vectors for the
+    texts it embedded."""
+    cfg["contextual"]["enabled"] = True
+    r = Path(cfg["paths"]["repos_dir"]) / "p"
+    a = write_md(r / "docs" / "a.md", "# a\n\nalpha text here.\n")
+    log = []
+
+    class LoggingContextualizer:
+        enabled = True
+
+        def contextualize(self, doc, chunks):
+            log.append("contextualize")
+            return [""] * len(chunks)
+
+    class _LoggingRecordingModels(_RecordingModels):
+        def invoke(self, role, operation):
+            log.append("invoke")
+            return super().invoke(role, operation)
+
+    class SpyEmbedder(FakeEmbedder):
+        def __init__(self, dim=64):
+            super().__init__(dim)
+            self.embed_calls = []
+
+        def embed(self, texts, batch_size=None):
+            self.embed_calls.append(list(texts))
+            return super().embed(texts, batch_size)
+
+    recording = _LoggingRecordingModels(FakeEmbedder(dim=64))
+    pipe = IndexPipeline(Lanes(cfg), store, recording, cfg, EventStore(tmp_path / "ev2.db"))
+    pipe._contextualizer = LoggingContextualizer()
+
+    rep = pipe.index([str(a)])
+
+    assert rep.upserted_rows == 1
+    assert log == ["contextualize", "invoke"]
+    assert len(recording.calls) == 1
+    role, operation = recording.calls[0]
+    assert role == "embedder"
+
+    spy = SpyEmbedder(dim=64)
+    result = operation(spy)
+    assert spy.embed_calls, "the locked operation must call embedder.embed(texts)"
+    assert result == spy.embed(spy.embed_calls[0])   # a pure fn of texts: re-embedding matches
+
+
 def _flaky_models(cfg, exc, fail_on):
     """A registry whose FIRST embedder raises `exc` once, from the embed of the
     chunk containing `fail_on`. Only that instance is sick, so RELOADING is the
@@ -287,6 +368,37 @@ def test_an_ordinary_embed_failure_still_only_costs_its_own_document(cfg, store,
     assert [f["file"] for f in rep.failed] == [canonical(a)]
     assert "token id out of range" in rep.failed[0]["error"]
     assert rep.upserted_rows == 1 and store.ledger().keys() == {canonical(b)}
+
+
+def test_a_model_load_failure_fails_the_job_not_the_document(cfg, store, tmp_path):
+    """`Models._get` failing means the registry could not resolve a model at
+    ALL — that is a whole-run problem, not one document's, exactly like a
+    device fault that survives reload. It must propagate out of `index()` (so
+    `Mainframe.submit`'s retry/requeue machinery sees it and restores the
+    paths) rather than becoming a per-document `DocFailure` that lets the run
+    "succeed" while silently marking every file failed and erasing the
+    ledger's evidence that anything went wrong.
+
+    This is the scenario `tests/v2/test_daemon.py::test_healthz_never_touches_
+    models` exercises through the daemon; this test exercises it directly
+    through the pipeline, including the OOM case `is_device_failure` is
+    documented to exclude — the one case a reload genuinely cannot fix."""
+    from mainframe.core.indexer import EmbedderUnavailable
+    from mainframe.core.models import Models
+    from v2.conftest import FakeReranker
+
+    r = Path(cfg["paths"]["repos_dir"]) / "p"
+    a = write_md(r / "docs" / "a.md", "# a\n\nalpha text here.\n")
+
+    for message in ("no weights on disk", "CUDA out of memory"):
+        def _dead_factory(_cfg, message=message):
+            raise RuntimeError(message)
+        models = Models(cfg, embedder_factory=_dead_factory, reranker_factory=lambda c: FakeReranker(top_k=3))
+        pipe = IndexPipeline(Lanes(cfg), store, models, cfg, EventStore(tmp_path / "ev.db"))
+
+        with pytest.raises(EmbedderUnavailable, match=message):
+            pipe.index([str(a)])
+        assert store.ledger() == {}, "a load failure must not look like a successfully-processed file"
 
 
 def test_rescan_skips_prune_when_root_is_missing(cfg, store, tmp_path):

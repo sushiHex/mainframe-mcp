@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from mainframe.core.indexer import UNCHANGED, VANISHED, DocFailure, prepare_document
+from mainframe.core.indexer import UNCHANGED, VANISHED, DocFailure, EmbedderUnavailable, prepare_document
 from mainframe.core.paths import canonical, doc_id
 
 logger = logging.getLogger(__name__)
@@ -205,9 +205,41 @@ class IndexPipeline:
         docs = []
         deleted_paths = list(deleted_paths)
         ctx = self._ctx()
+        # Built once per batch, not per document: this is the ONLY thing that
+        # runs under the model lock. Everything `prepare_document` does before
+        # calling it — file read, hash, secret scrub, frontmatter split,
+        # chunking, and (when enabled) the contextualizer's API round-trip —
+        # now runs outside `Models.invoke`, so a search's query embedding and
+        # rerank no longer queue behind a batch's disk/CPU/network work, and
+        # an unchanged file (the known_hash check, also outside the lock) never
+        # takes the lock or forces a model load at all.
+        #
+        # It also has to tell "the model was never resolved" apart from "the
+        # model ran and failed" — `prepare_document` cannot, since both arrive
+        # as a plain exception out of one opaque call. `entered` witnesses
+        # whether `Models.invoke` ever got as far as calling `run` (it does
+        # not, when `_get` fails outright); `models.loaded` catches the other
+        # half, where `run` DID execute once before a device fault, but the
+        # post-invalidate reload inside `invoke` then also failed to produce a
+        # model. Either way there is no model to blame this document on.
+        def embed(texts):
+            entered = False
+
+            def run(model):
+                nonlocal entered
+                entered = True
+                return model.embed(texts)
+
+            try:
+                return self.models.invoke("embedder", run)
+            except Exception as e:
+                if not entered or not self.models.loaded("embedder"):
+                    raise EmbedderUnavailable(str(e)) from e
+                raise
+
         for lf in chunk:
-            out = self.models.invoke("embedder", lambda e, lf=lf: prepare_document(
-                lf, self.chunk_cfg, e, known_hash=ledger.get(lf.path), contextualizer=ctx))
+            out = prepare_document(lf, self.chunk_cfg, embed, known_hash=ledger.get(lf.path),
+                                   contextualizer=ctx)
             if out is VANISHED:
                 self.empty_paths.discard(lf.path)
                 # A degraded ledger or unavailable root must never turn a
