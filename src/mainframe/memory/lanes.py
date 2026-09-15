@@ -30,7 +30,8 @@ from mainframe.memory.frontmatter import split
 logger = logging.getLogger(__name__)
 
 SKIP_DIRS = frozenset({".git", "node_modules", "__pycache__", ".venv", "extracted", "raw",
-                       ".lancedb", "index.lancedb", ".models", ".claude", "eval", "build", "dist"})
+                       ".lancedb", "index.lancedb", ".models", ".claude", "eval", "build", "dist",
+                       "tmp"})
 SKIP_FILES = frozenset({"README.md", "CONTRIBUTING.md", "CHANGELOG.md", "LICENSE.md",
                         "TODO.md", "NEWS.md", "SCORECARD.md"})
 ADHOC_PROJECT = "_adhoc"

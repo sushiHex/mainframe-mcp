@@ -25,6 +25,9 @@ def test_knowledge_scanner_matches_v1_rules(cfg):
     write_md(r / "research" / "memory" / "proj.md", "# note")
     write_md(r / "research" / "sessions" / "old.md", "# v1 raw lane — kept separate from v2 captures")
     write_md(r / "node_modules" / "docs" / "x.md", "# skipped dir")
+    # Scratch trees hold whole copies of a project's docs/: one real corpus had 14,666 of
+    # its 14,934 indexed documents under tmp/, ~60 duplicates of each real file.
+    write_md(r / "tmp" / "t137" / "red" / "docs" / "arch.md", "# scratch copy of a real doc")
     write_md(r / "src" / "notes.md", "# not in a knowledge dir")
     (_repo(cfg, ".hidden")).mkdir()
     files = Lanes(cfg).knowledge_files()
