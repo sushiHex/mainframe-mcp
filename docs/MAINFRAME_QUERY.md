@@ -42,11 +42,12 @@ The full MCP endpoint exposes `search`. Its request arguments are:
 from ordinary retrieval. `response_format` is `concise`, `detailed`, or
 `full`; concise is the default.
 
-Every response contains `results` and `ranked_by`. `ranked_by` names the
-model that ordered these results, or is `null` when nothing ranked them —
-either `results` is empty, or the reranker is administratively disabled
-(`reranker.enabled: false`), in which case every `rerank_score` is `0.0` and
-reflects candidate order only. An empty result set also carries `guidance`.
+Every response contains `results` and `reranked` — a boolean answering the
+caller's real question, whether `rerank_score` is a ranking signal. It is
+`false` when nothing ranked the results — either `results` is empty, or the
+reranker is administratively disabled (`reranker.enabled: false`), in which
+case every `rerank_score` is `0.0` and reflects candidate order only. An
+empty result set also carries `guidance`.
 Each result always has `file`, `heading`, `rerank_score`, and a short
 `snippet`. `rerank_score` orders the retrieved candidates within that
 response. It is useful for comparison there, but it is not a claim that a

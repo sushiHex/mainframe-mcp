@@ -34,8 +34,8 @@ def test_concise_shape_and_line_spans(cfg, store, fake_embedder, fake_reranker, 
                  "## Qwen reranker\n\nqwen3 reranker hybrid search details here.\n")
     _index(store, fake_embedder, [LaneFile(canonical(p), "knowledge", "p")])
     out = _svc(cfg, store, fake_embedder, fake_reranker).search("qwen3 reranker hybrid", limit=3)
-    assert out["ranked_by"] == fake_reranker.model_name and "guidance" not in out
-    assert "confidence" not in out
+    assert out["reranked"] is True and "guidance" not in out
+    assert set(out) == {"results", "reranked"}
     r = out["results"][0]
     assert set(r) == {"file", "heading", "line_start", "line_end", "rerank_score", "snippet"}
     assert r["heading"] == "Qwen reranker" and r["line_start"] == 5 and r["line_end"] == 7
@@ -126,25 +126,27 @@ def test_citation_recovery_still_requires_indexed_revision(tmp_path):
 def test_empty_guidance_and_raw_scores_have_no_rank_threshold(
         cfg, store, fake_embedder, tmp_path, score):
     class RawLogitReranker:
-        enabled = True; heading_inject = False; default_top_k = 3; model_name = "raw-logit"
+        enabled = True; heading_inject = False; default_top_k = 3
         def rerank(self, q, docs, top_k=None, headings=None):
             return [(i, score) for i in range(min(top_k or 3, len(docs)))]
     svc = SearchService(_models(cfg, fake_embedder, RawLogitReranker()), store, cfg)
     out = svc.search("anything")
-    assert out["results"] == [] and out["ranked_by"] is None
+    assert out["results"] == [] and out["reranked"] is False
     assert "include_sessions" in out["guidance"]
+    assert set(out) == {"results", "reranked", "guidance"}
     p = write_md(tmp_path / "repos" / "p" / "docs" / "a.md", "# T\n\nqwen3 reranker text.\n")
     _index(store, fake_embedder, [LaneFile(canonical(p), "knowledge", "p")])
     out = svc.search("qwen3")
-    assert out["ranked_by"] == "raw-logit" and "guidance" not in out
+    assert out["reranked"] is True and "guidance" not in out
+    assert set(out) == {"results", "reranked"}
     assert out["results"][0]["rerank_score"] == round(score, 4)
 
 
-def test_disabled_reranker_reports_ranked_by_none_and_candidate_order(cfg, store, fake_embedder, tmp_path):
+def test_disabled_reranker_reports_reranked_false_and_candidate_order(cfg, store, fake_embedder, tmp_path):
     """`reranker.enabled: false` is the ONE case where `rerank_score` is not a
     ranking signal: rerank() returns candidate order with every score 0.0
     (tests/v2/test_reranker.py::test_disabled_reranker_keeps_candidate_order).
-    `ranked_by` must be null so a caller can detect it instead of trusting
+    `reranked` must be False so a caller can detect it instead of trusting
     scores that look real but aren't."""
     from mainframe.core.reranker import Reranker
 
@@ -158,15 +160,16 @@ def test_disabled_reranker_reports_ranked_by_none_and_candidate_order(cfg, store
     raw = store.search(q_vec, top_k=20, include_captures=False, query_text="qwen3 candidate")
     out = _svc(cfg, store, fake_embedder, reranker).search("qwen3 candidate", limit=len(raw))
 
-    assert out["ranked_by"] is None
+    assert out["reranked"] is False
+    assert set(out) == {"results", "reranked"}
     assert [r["rerank_score"] for r in out["results"]] == [0.0] * len(raw)
     assert [r["file"] for r in out["results"]] == [row["doc_path"] for row in raw]
 
 
-def test_ranked_by_comes_from_the_same_invoke_as_the_ranking(cfg, store, fake_embedder, fake_reranker, tmp_path):
-    """A second `invoke("reranker", ...)` to ask "which model ranked this?"
-    could observe a reload between the two calls and report a model that
-    didn't actually do the ranking. `ranked_by` must be read off the SAME
+def test_reranked_comes_from_the_same_invoke_as_the_ranking(cfg, store, fake_embedder, fake_reranker, tmp_path):
+    """A second `invoke("reranker", ...)` to ask "is this ranked?" could
+    observe a reload between the two calls and report a state that didn't
+    actually produce the ordering. `reranked` must be read off the SAME
     invocation that produced the ordering."""
     p = write_md(tmp_path / "repos" / "p" / "docs" / "a.md", "# T\n\nqwen3 reranker text.\n")
     _index(store, fake_embedder, [LaneFile(canonical(p), "knowledge", "p")])
@@ -183,7 +186,7 @@ def test_ranked_by_comes_from_the_same_invoke_as_the_ranking(cfg, store, fake_em
     models = CountingModels(fake_embedder, fake_reranker)
     out = SearchService(models, store, cfg).search("qwen3 reranker")
     assert models.calls.count("reranker") == 1
-    assert out["ranked_by"] == fake_reranker.model_name
+    assert out["reranked"] is True
 
 
 def test_limit_is_clamped_and_sessions_opt_in(cfg, store, fake_embedder, fake_reranker, tmp_path):

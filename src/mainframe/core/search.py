@@ -10,6 +10,16 @@ MAX_RESULTS = 10
 SNIPPET_CHARS = 200
 TEXT_CHARS = 500
 
+# The literal top-level key `search()` uses to say whether `rerank_score` is a
+# ranking signal (True) or candidate order with every score 0.0 (False). The
+# caller's only question is binary, so this is a bool, never a model name --
+# a model value is settable to an arbitrary local path (`reranker.model` /
+# `MAINFRAME_RERANKER_MODEL`), which would otherwise leak a home directory
+# into every search response. Exported so
+# tests/v2/test_skill_search_contract.py imports this exact value instead of
+# a hardcoded string that can't notice a rename -- see that module's docstring.
+RERANKED_KEY = "reranked"
+
 _EMPTY_GUIDANCE = ("No matches. Rephrase with SPECIFIC technical terms (function/class/proper "
                    "names, exact config keys, error strings) — natural-language questions rank "
                    "poorly. Or set include_sessions=true to also search raw session captures.")
@@ -67,26 +77,24 @@ class SearchService:
         q = self.models.invoke("embedder", lambda e: e.embed_query(query))
         raw = self.store.search(q, top_k=pool, include_captures=include_sessions, query_text=query)
         if not raw:
-            return {"results": [], "ranked_by": None, "guidance": _EMPTY_GUIDANCE}
+            return {"results": [], RERANKED_KEY: False, "guidance": _EMPTY_GUIDANCE}
         texts = [r["text"] for r in raw]
         headings = [r.get("heading", "") for r in raw]
-        # `ranked_by` and the ordering MUST come from the same invoke: a second
-        # call to ask "which model?" would take the model lock twice and could
-        # name a different model than the one that actually ranked, if a
-        # reload happened between the two calls. `r.model_name` is the honest
-        # identity Reranker already carries; `r.enabled` is False only when
-        # the backend is administratively disabled, in which case rerank()
-        # returns candidate order with every score 0.0 (see
+        # `reranked` and the ordering MUST come from the same invoke: a second
+        # call to ask "is this ranked?" would take the model lock twice and
+        # could report a stale answer if a reload happened between the two
+        # calls. `r.enabled` is False only when the backend is
+        # administratively disabled, in which case rerank() returns candidate
+        # order with every score 0.0 (see
         # tests/v2/test_reranker.py::test_disabled_reranker_keeps_candidate_order)
-        # and nothing ranked the results, so `ranked_by` must be null.
-        ranked, ranked_by = self.models.invoke(
+        # and rerank_score is not a ranking signal, so `reranked` must be False.
+        ranked, reranked = self.models.invoke(
             "reranker",
-            lambda r: (r.rerank(query, texts, top_k=limit, headings=headings),
-                       r.model_name if r.enabled else None),
+            lambda r: (r.rerank(query, texts, top_k=limit, headings=headings), r.enabled),
         )
         results = [self._shape(raw[i], float(s), response_format) for i, s in ranked]
         self._add_line_spans(raw, ranked, results)
-        return {"results": results, "ranked_by": ranked_by}
+        return {"results": results, RERANKED_KEY: reranked}
 
     @staticmethod
     def _shape(row: dict, score: float, fmt: str) -> dict:

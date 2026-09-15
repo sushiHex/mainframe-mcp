@@ -39,29 +39,31 @@ One topic per query. Two focused searches beat one broad one.
 
 ## Reading the result
 
-`search` returns `{"results": [...], "ranked_by": "<model name>"|null, "guidance"?: "..."}`.
-`guidance` appears only when `results` is empty.
+`search` returns `{"results": [...], "reranked": true|false, "guidance"?: "..."}`.
+`guidance` appears only when `results` is empty (`reranked` is then `false`).
 
 - **Order is the signal, not the absolute score.** Use `rerank_score` (higher
   is better) to rank hits against each other — it's a model-native ordering
-  signal, not a calibrated probability. Reranker backends emit incompatible
-  scales (some bounded probabilities, some unbounded logits), so no fixed
-  cutoff means "good enough" across backends — PR #17 removed the absolute
-  threshold for exactly this reason. NOT `score` (raw vector distance, on
-  detailed/full results only) — that's for debugging, not ranking.
-- `ranked_by` names the model whose scoring produced this response's order
-  (e.g. `"Qwen/Qwen3-Reranker-0.6B"`). It is `null` only when nothing ranked
-  the results: `results` is empty, or the reranker is administratively
-  disabled (`reranker.enabled: false`) — in that one case `rerank_score` is
-  `0.0` for every result and reflects candidate order only, not a ranking
-  judgment. If `results` is nonempty and `ranked_by` names a model, every
-  `rerank_score` in the response is a real ranking signal.
+  signal, not a calibrated probability. `rerank_score` orders results within
+  a response; it is NOT a correctness or calibrated-confidence score.
+  Reranker backends emit incompatible scales (some bounded probabilities,
+  some unbounded logits), so no fixed cutoff means "good enough" across
+  backends — PR #17 removed the absolute threshold for exactly this reason.
+  NOT `score` (raw vector distance, on detailed/full results only) — that's
+  for debugging, not ranking.
+- `reranked` answers the caller's actual question — are these scores a
+  ranking signal — as a plain boolean. It is `false` only when nothing
+  ranked the results: `results` is empty, or the reranker is
+  administratively disabled (`reranker.enabled: false`) — in that one case
+  `rerank_score` is `0.0` for every result and reflects candidate order
+  only, not a ranking judgment.
 - Models load on demand: the first search after a restart may be slow while
   the embedder/reranker load, but a search always ranks its results or fails
   outright — it never returns results silently unranked. A returned result
-  is always a ranked result; read `ranked_by` on the response itself rather
-  than inferring ranking status from `status()` or a `model.loaded` event
-  seen earlier.
+  is ranked unless `reranked` is `false` — and a pathologically long
+  `reranker.instruction` can defeat ranking without the flag noticing. Read
+  `reranked` on the response itself rather than inferring ranking status
+  from `status()` or a `model.loaded` event seen earlier.
 - To read the full source: each hit has `file` + `line_start`/`line_end` — call
   your `read_file(path=file, offset=line_start, ...)` to pull the exact section
   and cite it. (`char_start`/`char_end` are there too for char-oriented tools.)
