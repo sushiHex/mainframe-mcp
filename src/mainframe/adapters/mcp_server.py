@@ -24,7 +24,10 @@ _MAINTAIN_GUIDANCE = (f"action: one of {', '.join(JOBS)}; "
 def _register(mcp: FastMCP, app, read_only: bool):
     @mcp.tool(name="search", annotations=READ_ONLY,
               description=("Search the Mainframe (hybrid vector+keyword, reranked). Use SPECIFIC technical "
-                           "terms; trust rerank_score (higher = better). response_format: concise (default) "
+                           "terms; trust rerank_score (higher = better) -- not a correctness or calibrated "
+                           "confidence score. reranked is false when nothing ranked these results (empty "
+                           "results, or the reranker is disabled; rerank_score is then 0.0 for every result "
+                           "and reflects candidate order only). response_format: concise (default) "
                            "or detailed. Session captures are excluded unless include_sessions=true."))
     async def search(query: str, limit: int = 3, include_sessions: bool = False, response_format: str = "concise") -> dict:
         return await asyncio.to_thread(app.search, query, limit, include_sessions, response_format)
