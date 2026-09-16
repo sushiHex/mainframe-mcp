@@ -142,18 +142,116 @@ def test_help_text_is_ascii(cfg, capsys):
     assert "Mainframe" in out and out.isascii(), out
 
 
-def test_up_and_install_task_explain_a_missing_task_scheduler(cfg, capsys):
+def test_install_task_explains_a_missing_task_scheduler(cfg, capsys):
     """the CLI supports Windows and POSIX; `schtasks` does not exist off Windows
     and a traceback is not the promised guidance."""
-    def no_schtasks(argv):
-        raise FileNotFoundError("schtasks")
-
-    assert cli.main(["up"], config=cfg, http=FakeHTTP({}), runner=no_schtasks) == 1
-    err = capsys.readouterr().err
-    assert "Windows-only" in err and "mainframe serve" in err and err.isascii(), err
-    assert cli.main(["install-task"], config=cfg, runner=no_schtasks) == 1
+    assert cli.main(["install-task"], config=cfg, runner=_no_schtasks) == 1
     err = capsys.readouterr().err
     assert "Windows-only" in err and err.isascii(), err
+
+
+def _no_schtasks(argv):
+    raise FileNotFoundError("schtasks")
+
+
+def _never_spawn(config):
+    raise AssertionError("should have started through the logon task")
+
+
+def _health(state, nonce="n"):
+    """A daemon that answers /healthz only while `state['up']` is true."""
+    return {("GET", "/healthz"): lambda _: {"ok": state["up"], "nonce": nonce}}
+
+
+def test_up_falls_back_to_a_detached_serve_when_no_task_answers(cfg, capsys):
+    """Task Scheduler refuses to register a task without elevation on some
+    machines. "the scheduler is out of reach" is not a reason to leave the
+    operator with no daemon; it is a reason to start one another way, and say so."""
+    write_discovery(cfg, 1234, "n")
+    state = {"up": False}
+    spawned = []
+
+    def spawn(config):
+        spawned.append(config)
+        state["up"] = True          # the detached serve comes up
+
+    assert cli.main(["up"], config=cfg, http=FakeHTTP(_health(state)),
+                    runner=_no_schtasks, spawn=spawn) == 0
+    assert spawned == [cfg]
+    err = capsys.readouterr().err
+    assert "detached" in err and "install-task" in err and err.isascii(), err
+
+
+def test_start_says_when_the_launcher_produced_no_process_at_all(cfg, capsys):
+    """The failure this exists to close: a launcher returns cleanly, nothing
+    starts, and no log line is written anywhere. The growth of daemon.out is what
+    separates that from "it started and died"."""
+    rc = cli.start_daemon(cfg, lambda argv: 0, _never_spawn, FakeHTTP({}), 0)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "no process at all" in err and err.isascii(), err
+
+
+def test_start_says_when_something_started_and_then_died(cfg, capsys):
+    out = cli.daemon_out(cfg)
+
+    def spawn(config):
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("Traceback (most recent call last): boom\n", encoding="utf-8")
+
+    rc = cli.start_daemon(cfg, _no_schtasks, spawn, FakeHTTP({}), 0)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "grew" in err and "bytes" in err and err.isascii(), err
+
+
+def test_a_detached_serve_redirects_its_output(cfg, monkeypatch):
+    """Load-bearing, not tidiness: a detached child on Windows has no console,
+    and the model loader's progress against an invalid handle kills the daemon
+    seconds after it starts, leaving no process and no log line."""
+    seen = {}
+
+    def fake_popen(argv, **kw):
+        seen.update(argv=argv, **kw)
+        return object()
+
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    cli.spawn_detached(cfg)
+    assert seen["argv"][1:] == ["-m", "mainframe.adapters.cli", "serve"]
+    assert seen["stdout"] is not None
+    assert seen["stderr"] == cli.subprocess.STDOUT and seen["stdin"] == cli.subprocess.DEVNULL
+
+
+def test_restart_is_stop_then_start(cfg):
+    write_discovery(cfg, 1234, "n")
+    state = {"up": True}
+
+    def shutdown(_body):
+        state["up"] = False
+        return {"stopping": True}
+
+    def runner(argv):
+        state["up"] = True          # the logon task brought it back
+        return 0
+
+    http = FakeHTTP({**_health(state), ("POST", "/shutdown"): shutdown})
+    assert cli.main(["restart"], config=cfg, http=http, runner=runner, spawn=_never_spawn) == 0
+    assert "/shutdown" in [c[1] for c in http.calls]
+
+
+def test_restart_does_not_try_to_stop_a_daemon_that_is_already_down(cfg):
+    """restart is stop-then-start, and stopping what is already stopped is not
+    a step - it is an error waiting to be reported."""
+    write_discovery(cfg, 1234, "n")
+    state = {"up": False}
+
+    def runner(argv):
+        state["up"] = True
+        return 0
+
+    http = FakeHTTP(_health(state))
+    assert cli.main(["restart"], config=cfg, http=http, runner=runner, spawn=_never_spawn) == 0
+    assert all(c[1] != "/shutdown" for c in http.calls)
 
 
 def test_rebuild_is_offline_only_even_when_the_daemon_is_up(cfg, store, tmp_path, capsys):
