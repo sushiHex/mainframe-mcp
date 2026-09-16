@@ -17,6 +17,18 @@ def _error(id_, code: int, message: str) -> str:
     return json.dumps({"jsonrpc": "2.0", "id": id_, "error": {"code": code, "message": message}})
 
 
+def _never_sent(exc) -> bool:
+    """True when `exc` PROVES the request never reached a daemon.
+
+    Only a connect-phase failure proves it, and only such a failure may be
+    replayed: a read timeout or a reset mid-response may already have been
+    processed, and a status error certainly was. `capture` writes a file, so a
+    retry that cannot make that distinction would apply a mutation twice.
+    """
+    import httpx
+    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+
+
 def forward(line: str, post):
     try:
         msg = json.loads(line)
@@ -55,6 +67,15 @@ def make_post(config, http=None):
     so a shim that starts ahead of the daemon heals itself once the daemon
     comes up.
 
+    A shim that OUTLIVES a daemon needs more than that. `service.port` is 0, so
+    every daemon start takes a fresh ephemeral port, and a shim holding the old
+    one is pointed at an address nothing answers. Healing on the next call left
+    THIS call to fail, so a restart surfaced one raw `[WinError 10061]` to
+    whichever tool happened to be called first - reported, reasonably, as that
+    tool being broken while the others served. So when the failed address came
+    from the cache and the failure proves the request never left (`_never_sent`),
+    re-discover and send it once more. Exactly once: see that predicate.
+
     Args:
         config: Mainframe config dict
         http: Optional fake HTTP client for testing (default: httpx.Client)
@@ -87,16 +108,29 @@ def make_post(config, http=None):
         state["base"] = f"http://127.0.0.1:{info['port']}/mcp"
         state["headers"] = mcp_headers
 
-    def post(body):
-        if state["base"] is None:
-            _discover()
+    def _send(body):
         try:
             r = _http().post(state["base"], content=json.dumps(body), headers=state["headers"])
             r.raise_for_status()
             return r.json() if r.content else None
         except Exception:
-            state["base"] = None      # transport failed: re-discover next time
+            state["base"] = None      # an address stays cached only while it works
             raise
+
+    def post(body):
+        cached = state["base"] is not None
+        if not cached:
+            _discover()
+        try:
+            return _send(body)
+        except Exception as e:
+            if not (cached and _never_sent(e)):
+                raise
+        # The address came from the cache and the request never left this
+        # process: the daemon moved. Find it and send the request once more,
+        # so the move costs the caller nothing rather than one raw socket error.
+        _discover()
+        return _send(body)
 
     return post
 
