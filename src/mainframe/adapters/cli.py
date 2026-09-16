@@ -25,6 +25,10 @@ TASK_NAME = "Mainframe daemon"
 # Windows, where an em dash arrives as mojibake.
 NO_SCHTASKS = ("mainframe: Task Scheduler is Windows-only; run `mainframe serve` in a terminal "
                "(service units for other platforms are planned)")
+NO_TASK_FALLBACK = ("mainframe: no logon task answered; starting a detached `serve` instead. "
+                    "Run `mainframe install-task` once for a daemon that returns after a reboot.")
+START_WAIT_SECONDS = 120
+START_POLL_SECONDS = 1.0
 
 # The maintenance verbs the CLI exposes, each a plain POST to /jobs/<name>.
 # `index` is deliberately absent: `Mainframe.maintain` treats it as an alias for
@@ -141,12 +145,119 @@ def _call(fn) -> int:
     return 0
 
 
-def main(argv=None, config=None, http=None, runner=None) -> int:
+def daemon_out(config) -> Path:
+    return Path(config["paths"]["mainframe_dir"]) / "daemon.out"
+
+
+def spawn_detached(config) -> None:
+    """Start `serve` as a detached child whose output is redirected to a file.
+
+    The redirect is load-bearing, not tidiness. A detached child on Windows has
+    no console, and the model loader writes progress to stdout; against an
+    invalid handle that kills the daemon seconds after it starts, leaving no
+    process and no log line - a start that reports success and produced nothing.
+    """
+    out = daemon_out(config)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    # DETACHED_PROCESS alone: Windows documents CREATE_NO_WINDOW and
+    # DETACHED_PROCESS as mutually exclusive, and combining them can fail
+    # CreateProcess outright. No console is wanted anyway - output goes to `out`.
+    extra = ({"creationflags": subprocess.DETACHED_PROCESS}
+             if sys.platform == "win32" else {"start_new_session": True})
+    with open(out, "ab") as sink:
+        subprocess.Popen([sys.executable, "-m", "mainframe.adapters.cli", "serve"],
+                         stdout=sink, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, **extra)
+
+
+def start_daemon(config, runner, spawn, http=None, timeout=START_WAIT_SECONDS) -> int:
+    """Make a daemon exist AND answer, or say why one does not.
+
+    Prefers the logon task, so that a manual start runs what logon runs. When no
+    task answers - Task Scheduler refuses to register one without elevation on
+    some machines - it falls back to a detached `serve` and says so, because the
+    remedy for "the scheduler is out of reach" is not "give up".
+
+    It returns only once `/healthz` answers. Returning when the LAUNCHER returned
+    is the defect this exists to close: a launcher can exit cleanly having
+    produced no process at all, and the caller cannot tell. On failure the growth
+    of `daemon.out` separates "it started and died" from "nothing ever ran",
+    which is the one fact that makes a silent start diagnosable.
+    """
+    # Anything the stop phase printed belongs above what follows: stdout is
+    # block-buffered when piped while stderr is not, so without this the start's
+    # messages overtake it and a restart reads out of order.
+    sys.stdout.flush()
+    out = daemon_out(config)
+    before = out.stat().st_size if out.exists() else 0
+    try:
+        rc = runner(["schtasks", "/Run", "/TN", TASK_NAME])
+    except OSError:
+        rc = 1
+    detached = rc != 0
+    if detached:
+        print(NO_TASK_FALLBACK, file=sys.stderr)
+        spawn(config)
+
+    deadline = time.monotonic() + timeout
+    while True:
+        if probe(config, http) is not None:
+            return 0
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(START_POLL_SECONDS)
+
+    grew = (out.stat().st_size if out.exists() else 0) - before
+    how = "a detached `serve`" if detached else "the logon task"
+    tail = (f"{out.name} grew {grew} bytes; read it for the cause"
+            if grew > 0 else
+            f"{out.name} did not change, so the launcher produced no process at all")
+    print(f"mainframe: started {how} but no daemon answered within {int(timeout)} s - {tail}",
+          file=sys.stderr)
+    return 1
+
+
+def wait_for_lock(config) -> int:
+    """Wait until nothing holds the daemon lock, i.e. the daemon is really gone."""
+    from filelock import FileLock, Timeout
+    # The daemon finishes its IN-FLIGHT job before releasing the lock, and
+    # that job can be a rescan of thousands of files. Wait for the daemon's
+    # OWN bound (service.shutdown_timeout_seconds) plus a margin, or `down`
+    # reports failure on a shutdown that is proceeding exactly as designed -
+    # and say out loud that the wait is deliberate rather than a hang.
+    limit = float(config["service"].get("shutdown_timeout_seconds", DOWN_WAIT_SECONDS)) \
+        + DOWN_WAIT_MARGIN_SECONDS
+    start = time.monotonic()
+    next_progress = start + DOWN_PROGRESS_SECONDS
+    while time.monotonic() - start < limit:
+        try:
+            with FileLock(str(lock_path(config))).acquire(timeout=0):
+                return 0
+        except Timeout:
+            now = time.monotonic()
+            if now >= next_progress:
+                print("mainframe: waiting for the daemon to finish its current job "
+                      f"({int(now - start)}s elapsed)", file=sys.stderr)
+                next_progress = now + DOWN_PROGRESS_SECONDS
+            time.sleep(0.5)
+    print(f"mainframe: daemon still holds the lock after {int(limit)} s", file=sys.stderr)
+    return 1
+
+
+def stop_daemon(client, config) -> int:
+    """Ask a RUNNING daemon to stop, and return once it has let go of the lock."""
+    rc = _call(lambda: _emit(client.post("/shutdown")))
+    return rc if rc != 0 else wait_for_lock(config)
+
+
+def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
     p = argparse.ArgumentParser(prog="mainframe", description="Mainframe v2: local knowledge base daemon")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("serve", help="run the daemon in the foreground")
-    sub.add_parser("up", help="start the daemon via the logon task (or say how)")
+    u = sub.add_parser("up", help="start the daemon and wait until it answers")
+    u.add_argument("--timeout", type=float, default=START_WAIT_SECONDS)
     sub.add_parser("down", help="ask the daemon to stop and wait for it")
+    r = sub.add_parser("restart", help="stop the daemon if it is running, start it, and confirm it answers")
+    r.add_argument("--timeout", type=float, default=START_WAIT_SECONDS)
     sub.add_parser("status")
     s = sub.add_parser("search"); s.add_argument("query"); s.add_argument("--sessions", action="store_true")
     s.add_argument("--limit", type=int, default=3); s.add_argument("--detailed", action="store_true")
@@ -195,19 +306,18 @@ def main(argv=None, config=None, http=None, runner=None) -> int:
         return 0
 
     client = DaemonClient(config, http)
+    spawn = spawn or spawn_detached
     if args.cmd == "up":
         if client.alive():
             print("mainframe: daemon already running")
             return 0
-        try:
-            rc = runner(["schtasks", "/Run", "/TN", TASK_NAME])
-        except OSError:
-            print(NO_SCHTASKS, file=sys.stderr)
-            return 1
-        if rc != 0:
-            print("mainframe: no logon task; run `mainframe install-task` once, or `mainframe serve` in a terminal",
-                  file=sys.stderr)
-        return rc
+        return start_daemon(config, runner, spawn, client.http, args.timeout)
+    if args.cmd == "restart":
+        if client.alive():
+            rc = stop_daemon(client, config)
+            if rc != 0:
+                return rc
+        return start_daemon(config, runner, spawn, client.http, args.timeout)
 
     alive = client.alive()
     if args.cmd == "down" and not alive:
@@ -217,32 +327,7 @@ def main(argv=None, config=None, http=None, runner=None) -> int:
         print("mainframe: daemon not running; run `mainframe up` (or `mainframe serve`)", file=sys.stderr)
         return DOWN_EXIT
     if args.cmd == "down":
-        rc = _call(lambda: _emit(client.post("/shutdown")))
-        if rc != 0:
-            return rc
-        from filelock import FileLock, Timeout
-        # The daemon finishes its IN-FLIGHT job before releasing the lock, and
-        # that job can be a rescan of thousands of files. Wait for the daemon's
-        # OWN bound (service.shutdown_timeout_seconds) plus a margin, or `down`
-        # reports failure on a shutdown that is proceeding exactly as designed —
-        # and say out loud that the wait is deliberate rather than a hang.
-        limit = float(config["service"].get("shutdown_timeout_seconds", DOWN_WAIT_SECONDS)) \
-            + DOWN_WAIT_MARGIN_SECONDS
-        start = time.monotonic()
-        next_progress = start + DOWN_PROGRESS_SECONDS
-        while time.monotonic() - start < limit:
-            try:
-                with FileLock(str(lock_path(config))).acquire(timeout=0):
-                    return 0
-            except Timeout:
-                now = time.monotonic()
-                if now >= next_progress:
-                    print("mainframe: waiting for the daemon to finish its current job "
-                          f"({int(now - start)}s elapsed)", file=sys.stderr)
-                    next_progress = now + DOWN_PROGRESS_SECONDS
-                time.sleep(0.5)
-        print(f"mainframe: daemon still holds the lock after {int(limit)} s", file=sys.stderr)
-        return 1
+        return stop_daemon(client, config)
     if args.cmd == "status":
         return _call(lambda: _emit(client.get("/status")))
     elif args.cmd == "search":
