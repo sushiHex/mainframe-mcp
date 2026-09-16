@@ -1,7 +1,12 @@
 __pycache__/
 *.pyc
 .lancedb/
-.eval-lancedb/
+# The eval index, its sibling fingerprint marker (`.eval-lancedb.meta.json`), and any
+# kept-aside copy (`.eval-lancedb-<label>/`). The marker records the embedder by the
+# literal config value, which in a local trial is an absolute path under the operator's
+# home directory — a directory-only pattern left it and the copies merely untracked, one
+# `git add -A` away from publishing that path.
+.eval-lancedb*
 .models/
 *.egg-info/
 dist/
