@@ -29,9 +29,21 @@ from mainframe.memory.frontmatter import split
 
 logger = logging.getLogger(__name__)
 
+# An agent's own working tree inside a project is that agent's STATE, not the
+# project's knowledge. `.claude` was already skipped and `.hermes` was not, which
+# is the shape of the defect rather than a missing entry: the set enumerated
+# instances of a category instead of naming it, so the next tool to keep state in
+# a dotted directory repeats the bug. Add to this set, not to SKIP_DIRS below.
+#
+# Not hypothetical, and not only duplicates: on the maintainer's corpus `.hermes`
+# trees supplied 14,795 of 63,072 indexed rows (23.5%) and 1,670 of the 2,297
+# repeated-content chunks (73%), because a runtime tree keeps candidate and
+# parity-check COPIES of the project's own docs. Knowledge that matters belongs
+# in `docs/` or `research/`, where it also survives a cache being cleared.
+AGENT_DIRS = frozenset({".claude", ".hermes"})
 SKIP_DIRS = frozenset({".git", "node_modules", "__pycache__", ".venv", "extracted", "raw",
-                       ".lancedb", "index.lancedb", ".models", ".claude", "eval", "build", "dist",
-                       "tmp"})
+                       ".lancedb", "index.lancedb", ".models", "eval", "build", "dist",
+                       "tmp"}) | AGENT_DIRS
 SKIP_FILES = frozenset({"README.md", "CONTRIBUTING.md", "CHANGELOG.md", "LICENSE.md",
                         "TODO.md", "NEWS.md", "SCORECARD.md"})
 ADHOC_PROJECT = "_adhoc"

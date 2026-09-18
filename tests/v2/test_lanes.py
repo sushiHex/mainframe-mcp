@@ -6,8 +6,8 @@ import pytest
 
 from mainframe.core.paths import canonical
 from mainframe.memory.frontmatter import render
-from mainframe.memory.lanes import (ADHOC_PROJECT, Lanes, capture_id_of, load_receipts,
-                                    save_receipts)
+from mainframe.memory.lanes import (ADHOC_PROJECT, AGENT_DIRS, Lanes, capture_id_of,
+                                    load_receipts, save_receipts)
 from v2.helpers import write_md
 
 
@@ -152,6 +152,37 @@ def test_pending_skips_unreadable_capture(cfg):
     good = write_md(d / "2026-01-01-000000-s1-c1.md", render({"capture_id": "c1"}) + "# one\n")
     (d / "2026-01-02-000000-s2-c2.md").mkdir()   # a directory named like a capture: unreadable as a file
     assert [Path(f.path).name for f in L.pending("proj")] == [good.name]
+
+
+def test_an_agents_working_tree_is_not_the_projects_knowledge(cfg):
+    """`.claude` was skipped and `.hermes` was not, so a runtime tree's
+    candidate/parity COPIES of a project's own docs were indexed as knowledge -
+    23.5% of the maintainer's rows, and 73% of its repeated-content chunks.
+
+    Every directory in AGENT_DIRS is asserted, not just the one that was missing:
+    the point is the category, since the next tool keeping state in a dotted
+    directory would otherwise repeat this."""
+    # Pin the two known members explicitly. The loop below is parameterised over
+    # AGENT_DIRS, so on its own a shrinking set would shrink the test and still
+    # pass - the guard needs to fail when a member is dropped.
+    assert {".claude", ".hermes"} <= AGENT_DIRS
+
+    L = Lanes(cfg)
+    r = _repo(cfg, "Proj")
+    write_md(r / "docs" / "real.md", "# the project's own docs")
+    for agent_dir in AGENT_DIRS:
+        write_md(r / agent_dir / "runtime" / "candidate" / "docs" / "copy.md", "# a copy")
+        write_md(r / agent_dir / "cache" / "research" / "cached.md", "# cached research")
+
+    enumerated = {f.path for f in L.knowledge_files()}
+    assert any(p.endswith("docs/real.md") or p.endswith("docs\\real.md") for p in enumerated)
+    for agent_dir in AGENT_DIRS:
+        assert not [p for p in enumerated if agent_dir in p.lower()], agent_dir
+        # the watcher's pure-string predicates must agree, or a change under an
+        # agent tree still flags a rescan that then indexes nothing
+        assert L.could_belong(r / agent_dir / "cache" / "research" / "cached.md") is False
+        assert L.dir_matters(r / agent_dir) is False
+        assert L.resolve(r / agent_dir / "cache" / "research" / "cached.md") is None
 
 
 def test_one_rule_for_enumeration_and_resolve(cfg):
