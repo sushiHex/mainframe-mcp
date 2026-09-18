@@ -29,6 +29,8 @@ NO_TASK_FALLBACK = ("mainframe: no logon task answered; starting a detached `ser
                     "Run `mainframe install-task` once for a daemon that returns after a reboot.")
 START_WAIT_SECONDS = 120
 START_POLL_SECONDS = 1.0
+LOG_WAIT_SECONDS = 5.0      # a handoff takes moments; anything longer is another holder
+LOG_POLL_SECONDS = 0.25
 
 # The maintenance verbs the CLI exposes, each a plain POST to /jobs/<name>.
 # `index` is deliberately absent: `Mainframe.maintain` treats it as an alias for
@@ -149,24 +151,59 @@ def daemon_out(config) -> Path:
     return Path(config["paths"]["mainframe_dir"]) / "daemon.out"
 
 
-def spawn_detached(config) -> None:
-    """Start `serve` as a detached child whose output is redirected to a file.
+def _open_log(out):
+    """`out` open for append, or None if it stays unavailable.
+
+    The handle becomes the child's stdout, so a dying daemon holds it for a
+    moment AFTER releasing the lock. Taking the lock as proof the previous
+    daemon is gone is the same mistake twice: it proves only that the lock is
+    free. So wait briefly, as `wait_for_lock` does for the resource it needs.
+
+    It gives up rather than waiting forever, because a log file must never be
+    able to prevent a daemon from starting - something else (an editor, a
+    scanner) may hold it indefinitely, and that is not a reason to have no
+    daemon.
+    """
+    out.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + LOG_WAIT_SECONDS
+    while True:
+        try:
+            return open(out, "ab")
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(LOG_POLL_SECONDS)
+
+
+def spawn_detached(config) -> bool:
+    """Start `serve` as a detached child. True when its output is being captured.
 
     The redirect is load-bearing, not tidiness. A detached child on Windows has
     no console, and the model loader writes progress to stdout; against an
     invalid handle that kills the daemon seconds after it starts, leaving no
     process and no log line - a start that reports success and produced nothing.
+
+    The return value is not a courtesy: `start_daemon` reads an unchanged
+    daemon.out as proof that nothing ran, and that reading is only valid while
+    the daemon is actually writing there.
     """
-    out = daemon_out(config)
-    out.parent.mkdir(parents=True, exist_ok=True)
     # DETACHED_PROCESS alone: Windows documents CREATE_NO_WINDOW and
     # DETACHED_PROCESS as mutually exclusive, and combining them can fail
     # CreateProcess outright. No console is wanted anyway - output goes to `out`.
     extra = ({"creationflags": subprocess.DETACHED_PROCESS}
              if sys.platform == "win32" else {"start_new_session": True})
-    with open(out, "ab") as sink:
+    sink = _open_log(daemon_out(config))
+    try:
+        # DEVNULL, not an unredirected handle: what kills a detached daemon is an
+        # INVALID stdout, and DEVNULL is valid. Losing the log costs diagnosis,
+        # never the daemon.
         subprocess.Popen([sys.executable, "-m", "mainframe.adapters.cli", "serve"],
-                         stdout=sink, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, **extra)
+                         stdout=sink or subprocess.DEVNULL, stderr=subprocess.STDOUT,
+                         stdin=subprocess.DEVNULL, **extra)
+    finally:
+        if sink is not None:
+            sink.close()
+    return sink is not None
 
 
 def start_daemon(config, runner, spawn, http=None, timeout=START_WAIT_SECONDS) -> int:
@@ -194,9 +231,10 @@ def start_daemon(config, runner, spawn, http=None, timeout=START_WAIT_SECONDS) -
     except OSError:
         rc = 1
     detached = rc != 0
+    captured = True
     if detached:
         print(NO_TASK_FALLBACK, file=sys.stderr)
-        spawn(config)
+        captured = spawn(config) is not False
 
     deadline = time.monotonic() + timeout
     while True:
@@ -208,9 +246,16 @@ def start_daemon(config, runner, spawn, http=None, timeout=START_WAIT_SECONDS) -
 
     grew = (out.stat().st_size if out.exists() else 0) - before
     how = "a detached `serve`" if detached else "the logon task"
-    tail = (f"{out.name} grew {grew} bytes; read it for the cause"
-            if grew > 0 else
-            f"{out.name} did not change, so the launcher produced no process at all")
+    if not captured:
+        # Without this the report would say "no process at all" about a daemon
+        # whose output was never being watched - a confident wrong diagnosis in
+        # the one place this instrumentation exists to be trusted.
+        tail = (f"{out.name} could not be opened, so its size says nothing about "
+                "this start and the daemon's own output was discarded")
+    elif grew > 0:
+        tail = f"{out.name} grew {grew} bytes; read it for the cause"
+    else:
+        tail = f"{out.name} did not change, so the launcher produced no process at all"
     print(f"mainframe: started {how} but no daemon answered within {int(timeout)} s - {tail}",
           file=sys.stderr)
     return 1

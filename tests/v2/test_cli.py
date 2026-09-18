@@ -1,3 +1,4 @@
+import builtins
 import json
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -220,6 +221,68 @@ def test_a_detached_serve_redirects_its_output(cfg, monkeypatch):
     assert seen["argv"][1:] == ["-m", "mainframe.adapters.cli", "serve"]
     assert seen["stdout"] is not None
     assert seen["stderr"] == cli.subprocess.STDOUT and seen["stdin"] == cli.subprocess.DEVNULL
+
+
+def _refuse_open(monkeypatch, path, times=None):
+    """Make opening `path` raise PermissionError - `times` times, or always.
+
+    The real race is a dying daemon still holding the stdout handle it inherited,
+    which is a moment wide and cannot be scheduled. Refusing the open reaches the
+    same branch deterministically.
+    """
+    real_open = builtins.open
+    state = {"n": 0}
+
+    def opener(file, *a, **kw):
+        if str(file) == str(path) and (times is None or state["n"] < times):
+            state["n"] += 1
+            raise PermissionError(13, "Permission denied")
+        return real_open(file, *a, **kw)
+
+    monkeypatch.setattr(builtins, "open", opener)
+    return state
+
+
+def test_a_log_that_cannot_be_opened_never_prevents_a_start(cfg, monkeypatch):
+    """A restart once died with PermissionError on daemon.out and left the daemon
+    DOWN. Availability is not worth trading for a log file - and DEVNULL is a
+    VALID handle, so the invalid-handle death the redirect exists to prevent
+    still cannot happen."""
+    out = cli.daemon_out(cfg)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("prior output\n", encoding="utf-8")
+    _refuse_open(monkeypatch, out)
+    monkeypatch.setattr(cli, "LOG_WAIT_SECONDS", 0.0)
+    seen = {}
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda argv, **kw: seen.update(kw) or object())
+
+    assert cli.spawn_detached(cfg) is False          # it started, and says it is not watching
+    assert seen["stdout"] == cli.subprocess.DEVNULL
+    assert out.read_text(encoding="utf-8") == "prior output\n"   # nothing truncated
+
+
+def test_the_log_open_waits_for_a_previous_daemon_to_let_go(cfg, monkeypatch):
+    """The handoff is the common case: the dying daemon releases the lock before
+    the OS closes the handle it inherited, so a brief wait is what the resource
+    actually needs."""
+    out = cli.daemon_out(cfg)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    refusals = _refuse_open(monkeypatch, out, times=2)
+    monkeypatch.setattr(cli, "LOG_POLL_SECONDS", 0.0)
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda argv, **kw: object())
+
+    assert cli.spawn_detached(cfg) is True
+    assert refusals["n"] == 2                        # it really retried, then captured
+
+
+def test_start_will_not_claim_nothing_ran_when_it_was_not_watching(cfg, capsys):
+    """The dangerous failure: an unchanged daemon.out reads as "no process at
+    all", which is a confident wrong diagnosis when output went to DEVNULL."""
+    rc = cli.start_daemon(cfg, _no_schtasks, lambda config: False, FakeHTTP({}), 0)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "says nothing about this start" in err and "no process at all" not in err
+    assert err.isascii(), err
 
 
 def test_restart_is_stop_then_start(cfg):
