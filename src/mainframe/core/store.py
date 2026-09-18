@@ -314,12 +314,16 @@ class Store:
         try:
             if self.table.count_rows() == 0:
                 return True
-            if not self._has_index("text"):
+            # ONE build path, so the clearing cannot be forgotten on one of them.
+            # Missing and broken both mean "these postings are not usable", and a
+            # branch that created the index without clearing `fts_error` would
+            # report a healthy index as broken and then rebuild every posting on
+            # the next optimize to fix a flag.
+            failure = self.fts_error
+            if failure is not None or not self._has_index("text"):
                 self.table.create_fts_index("text", replace=True)
-                logger.info("Created FTS index on text")
-            elif self.fts_error is not None:
-                self.table.create_fts_index("text", replace=True)
-                logger.info(f"Recreated FTS index on text after a failure: {self.fts_error}")
+                logger.info(f"Rebuilt FTS index on text after a failure: {failure}" if failure
+                            else "Created FTS index on text")
                 self.fts_error = None
             if not self._has_index("chunk_key"):
                 self.table.create_scalar_index("chunk_key", index_type="BTREE")
@@ -497,7 +501,9 @@ class Store:
                     # per query would be one line per search, forever - and
                     # leave the reason where `optimize` and `status` can see it.
                     if self.fts_error is None:
-                        logger.warning(f"keyword search is failing; answering vector-only: {e2}")
+                        logger.warning("keyword search is failing; answering vector-only. The next "
+                                       "optimize rebuilds the index, or run `mainframe optimize` "
+                                       f"to do it now: {e2}")
                     self.fts_error = str(e2)
 
         if not fts.empty and not vec.empty:

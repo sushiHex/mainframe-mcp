@@ -208,6 +208,27 @@ def test_optimize_repairs_a_keyword_index_that_exists_but_does_not_answer(store,
     assert store.index_health()["keyword_search"] == {"ok": True, "error": None}
 
 
+def test_creating_a_missing_index_also_clears_the_failure_that_reported_it(store, fake_embedder):
+    """Missing and broken both mean "these postings are not usable", so they take
+    ONE build path. A create branch that forgot to clear the flag would report a
+    healthy index as broken, then rebuild every posting on the next optimize to
+    fix a flag - the waste the healthy-index test exists to forbid."""
+    store.upsert_batch([_rows(fake_embedder, "c:/r/p/docs/a.md", ["alpha beta"])])
+    # a search BEFORE the first optimize: there is no FTS index yet, so the
+    # keyword branch fails and records it while the index is genuinely absent.
+    store.search(fake_embedder.embed_query("alpha"), top_k=5, query_text="alpha")
+    assert store.fts_error is not None
+
+    assert store.optimize() is True
+    assert store.index_health()["keyword_search"] == {"ok": True, "error": None}
+
+    counting = _FtsBroken(store.table)
+    counting.search = counting.real.search          # healthy now
+    store.table = counting
+    assert store.optimize() is True
+    assert counting.recreated == 0, "a cleared flag must not leave a rebuild queued"
+
+
 def test_a_healthy_keyword_index_is_never_recreated(store, fake_embedder):
     """Recreating an FTS index on every optimize would rebuild the postings of
     the whole table on a 15-minute timer."""
