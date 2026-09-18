@@ -1,3 +1,4 @@
+import logging
 import pytest
 
 from mainframe.core.paths import chunk_key, doc_id
@@ -145,6 +146,99 @@ def test_index_health_reports_index_presence(store, fake_embedder):
     assert store.optimize() is True
     cols = sorted(tuple(i["columns"]) for i in store.index_health()["indexes"])
     assert cols == [("chunk_key",), ("text",)]
+
+
+class _FtsBroken:
+    """A table whose FTS queries fail the way a dangling fragment reference
+    does, while every other operation works and `list_indices` keeps reporting
+    the index as present - which is exactly why existence never detected it."""
+
+    def __init__(self, real):
+        self.real, self.recreated = real, 0
+
+    def search(self, *a, **kw):
+        if kw.get("query_type") == "fts":
+            raise RuntimeError("the input to a take operation specified fragment id 89 "
+                               "but this fragment does not exist in the dataset")
+        return self.real.search(*a, **kw)
+
+    def create_fts_index(self, *a, **kw):
+        self.recreated += 1
+        return self.real.create_fts_index(*a, **kw)
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+def test_a_failing_keyword_branch_is_reported_not_swallowed(store, fake_embedder, caplog):
+    """A caught FTS error meant the query was answered vector-only with nothing
+    saying so - a degraded hybrid search is externally indistinguishable from a
+    healthy one. It is recorded where status and optimize can both see it, and
+    warned ONCE rather than per query."""
+    store.upsert_batch([_rows(fake_embedder, "c:/r/p/docs/a.md", ["alpha beta"])])
+    store.optimize()
+    assert store.index_health()["keyword_search"] == {"ok": True, "error": None}
+
+    store.table = _FtsBroken(store.table)
+    q = fake_embedder.embed_query("alpha")
+    with caplog.at_level(logging.WARNING):
+        store.search(q, top_k=5, query_text="alpha")          # still answers
+        store.search(q, top_k=5, query_text="alpha")          # and again
+    warnings = [r for r in caplog.records if "keyword search is failing" in r.message]
+    assert len(warnings) == 1, "one warning per outage, not one per query"
+
+    health = store.index_health()["keyword_search"]
+    assert health["ok"] is False and "fragment id 89" in health["error"]
+
+
+def test_optimize_repairs_a_keyword_index_that_exists_but_does_not_answer(store, fake_embedder):
+    """`_has_index("text")` reports the index as present while every real query
+    fails, so the create-if-missing check left it broken forever and optimize
+    returned ok beside it. The trigger is an observed failure, because a
+    synthetic probe passes on precisely this index."""
+    store.upsert_batch([_rows(fake_embedder, "c:/r/p/docs/a.md", ["alpha beta"])])
+    store.optimize()
+    broken = _FtsBroken(store.table)
+    store.table = broken
+    store.search(fake_embedder.embed_query("alpha"), top_k=5, query_text="alpha")
+    assert store.fts_error is not None and broken.recreated == 0
+
+    assert store.optimize() is True
+    assert broken.recreated == 1, "the index existed, so only an observed failure could trigger this"
+    assert store.index_health()["keyword_search"] == {"ok": True, "error": None}
+
+
+def test_creating_a_missing_index_also_clears_the_failure_that_reported_it(store, fake_embedder):
+    """Missing and broken both mean "these postings are not usable", so they take
+    ONE build path. A create branch that forgot to clear the flag would report a
+    healthy index as broken, then rebuild every posting on the next optimize to
+    fix a flag - the waste the healthy-index test exists to forbid."""
+    store.upsert_batch([_rows(fake_embedder, "c:/r/p/docs/a.md", ["alpha beta"])])
+    # a search BEFORE the first optimize: there is no FTS index yet, so the
+    # keyword branch fails and records it while the index is genuinely absent.
+    store.search(fake_embedder.embed_query("alpha"), top_k=5, query_text="alpha")
+    assert store.fts_error is not None
+
+    assert store.optimize() is True
+    assert store.index_health()["keyword_search"] == {"ok": True, "error": None}
+
+    counting = _FtsBroken(store.table)
+    counting.search = counting.real.search          # healthy now
+    store.table = counting
+    assert store.optimize() is True
+    assert counting.recreated == 0, "a cleared flag must not leave a rebuild queued"
+
+
+def test_a_healthy_keyword_index_is_never_recreated(store, fake_embedder):
+    """Recreating an FTS index on every optimize would rebuild the postings of
+    the whole table on a 15-minute timer."""
+    store.upsert_batch([_rows(fake_embedder, "c:/r/p/docs/a.md", ["alpha beta"])])
+    store.optimize()
+    counting = _FtsBroken(store.table)
+    counting.search = counting.real.search          # healthy: FTS works
+    store.table = counting
+    assert store.optimize() is True
+    assert counting.recreated == 0 and store.fts_error is None
 
 
 def test_search_snapshots_the_table_against_a_concurrent_drop(store, fake_embedder):

@@ -94,6 +94,12 @@ class Store:
         self.embedding_dim = embedding_dim
         self.fingerprint = fingerprint
         self.config_drift: dict = {}
+        # The last observed keyword-search failure, or None. Written by `search`
+        # (readers) and cleared by `_ensure_indexes` (the writer thread): one
+        # small assignment either way, never read-modify-write, so the honest
+        # weak guarantee - a reader may observe a repair a moment late - costs
+        # nothing and needs no lock on the search path.
+        self.fts_error: str | None = None
         self.cleanup = timedelta(minutes=cleanup_minutes)
         refresh = timedelta(seconds=read_consistency_seconds)
         if self.cleanup < refresh * 20:
@@ -287,15 +293,38 @@ class Store:
 
     def _ensure_indexes(self) -> bool:
         """FTS on text + BTREE on chunk_key, created lazily once rows exist
-        (an empty table cannot be indexed). Idempotent."""
+        (an empty table cannot be indexed). Idempotent.
+
+        An index that EXISTS is not an index that ANSWERS. After a large delete
+        the FTS postings can still reference a fragment the dataset no longer
+        has, and every query matching those rows fails with "the input to a take
+        operation specified fragment id N but this fragment does not exist" -
+        while `_has_index("text")` keeps reporting the index as present, so this
+        method used to leave it broken forever and `optimize` returned ok beside
+        it. Recreating it rebuilds the postings from the current dataset, which
+        is what actually clears the dangling reference.
+
+        The trigger is an OBSERVED failure (`fts_error`), not a probe: a
+        synthetic query only fails if it happens to match rows in the missing
+        fragment, so a probe reports health it has not established. The real
+        workload is the only honest detector, and `search` records what it sees.
+        """
         if self.table is None:
             return True
         try:
             if self.table.count_rows() == 0:
                 return True
-            if not self._has_index("text"):
+            # ONE build path, so the clearing cannot be forgotten on one of them.
+            # Missing and broken both mean "these postings are not usable", and a
+            # branch that created the index without clearing `fts_error` would
+            # report a healthy index as broken and then rebuild every posting on
+            # the next optimize to fix a flag.
+            failure = self.fts_error
+            if failure is not None or not self._has_index("text"):
                 self.table.create_fts_index("text", replace=True)
-                logger.info("Created FTS index on text")
+                logger.info(f"Rebuilt FTS index on text after a failure: {failure}" if failure
+                            else "Created FTS index on text")
+                self.fts_error = None
             if not self._has_index("chunk_key"):
                 self.table.create_scalar_index("chunk_key", index_type="BTREE")
                 logger.info("Created BTREE index on chunk_key")
@@ -466,7 +495,16 @@ class Store:
                     tbl.checkout_latest()
                     fts = _fts()
                 except Exception as e2:
-                    logger.debug(f"FTS unavailable: {e2}")
+                    # A caught FTS error is a DEGRADED ANSWER, not a debug
+                    # detail: this query is about to be answered vector-only and
+                    # nothing in the response says so. Warn once per outage -
+                    # per query would be one line per search, forever - and
+                    # leave the reason where `optimize` and `status` can see it.
+                    if self.fts_error is None:
+                        logger.warning("keyword search is failing; answering vector-only. The next "
+                                       "optimize rebuilds the index, or run `mainframe optimize` "
+                                       f"to do it now: {e2}")
+                    self.fts_error = str(e2)
 
         if not fts.empty and not vec.empty:
             new = fts[~fts["chunk_key"].isin(set(vec["chunk_key"]))]
@@ -507,19 +545,35 @@ class Store:
         except Exception:
             return None
 
+    @property
+    def keyword_search(self) -> dict:
+        """Whether the keyword half of hybrid search is answering.
+
+        `ok` is OBSERVATIONAL: it means no FTS query has failed since the last
+        repair, not that one has been verified to work. Verification is not
+        available - a synthetic probe passes on an index whose real queries
+        fail, because it only breaks if it happens to match the missing rows.
+        Claiming health from such a probe is the defect this reports, not a fix
+        for it, so the weaker true statement is the one published.
+        """
+        return {"ok": self.fts_error is None, "error": self.fts_error}
+
     def index_health(self) -> dict:
         tbl = self.table
         if tbl is None:
-            return {"fragments": 0, "versions": 0, "rows": 0, "indexes": []}
+            return {"fragments": 0, "versions": 0, "rows": 0, "indexes": [],
+                    "keyword_search": self.keyword_search}
         try:
             ds = tbl.to_lance()
             indexes = [{"columns": list(getattr(i, "columns", [])), "type": str(getattr(i, "index_type", ""))}
                        for i in tbl.list_indices()]
             return {"fragments": len(ds.get_fragments()), "versions": len(tbl.list_versions()),
-                    "rows": ds.count_rows(), "indexes": indexes}
+                    "rows": ds.count_rows(), "indexes": indexes,
+                    "keyword_search": self.keyword_search}
         except Exception as e:
             logger.warning(f"index_health failed: {e}")
-            return {"fragments": -1, "versions": -1, "rows": -1, "indexes": []}
+            return {"fragments": -1, "versions": -1, "rows": -1, "indexes": [],
+                    "keyword_search": self.keyword_search}
 
     def stats(self) -> dict:
         empty = {"total_chunks": 0, "by_lane": {}, "by_source_type": {}, "unique_docs": 0}
