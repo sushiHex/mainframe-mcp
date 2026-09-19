@@ -23,7 +23,8 @@ _MAINTAIN_GUIDANCE = (f"action: one of {', '.join(JOBS)}; "
 
 def _register(mcp: FastMCP, app, read_only: bool):
     @mcp.tool(name="search", annotations=READ_ONLY,
-              description=("Search the Mainframe (hybrid vector+keyword, reranked). Use SPECIFIC technical "
+              description=("Search the Mainframe (semantic vector search, reranked; keyword matching is a "
+                           "backstop, so an exact token is not guaranteed to match). Use SPECIFIC technical "
                            "terms; trust rerank_score (higher = better) -- not a correctness or calibrated "
                            "confidence score. reranked is false when nothing ranked these results (empty "
                            "results, or the reranker is disabled; rerank_score is then 0.0 for every result "

@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 TABLE = "chunks"
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 
+# How far below the worst vector hit a keyword-only candidate sits. Any value
+# above 1.0 has the same effect - it is a PRIORITY, not a tuning parameter, and
+# the number it multiplies is a distance rather than a relevance score.
+_BACKSTOP = 1.01
+
 # v2's index directory under `mainframe_dir`. Named here, read by everything
 # that opens the live index (the daemon, the eval harness) so the namespace is
 # one value rather than a string repeated per call site.
@@ -506,13 +511,33 @@ class Store:
                                        f"to do it now: {e2}")
                     self.fts_error = str(e2)
 
+        # THE POOL IS VECTOR-SELECTED AND KEYWORD-BACKSTOPPED.
+        #
+        # Keyword hits are ranked below EVERY vector hit, so they fill only the
+        # room the vector branch leaves - and on a corpus large enough for that
+        # branch to return a full pool, the room is none. `search` is therefore
+        # semantic with a keyword backstop, NOT a hybrid merge, whatever the
+        # word "hybrid" suggests elsewhere. The two tests below pin both halves
+        # of that sentence so the contract is stated rather than inferred.
+        #
+        # Whether admitting keyword candidates would help is OPEN. It was tried
+        # (issue #40) and the A/B was invalid: the live index gains documents
+        # while the daemon serves, so the before and after ran against different
+        # corpora. Measuring it needs a frozen index - copy the store and score
+        # it in-process with `--db` - not another run against the daemon.
+        #
+        # What IS established there: of the queries where keyword search finds
+        # the expected file and the answer does not, every one was already in
+        # the vector pool. The reranker had them and placed them outside the
+        # top 3, so pool composition is not obviously the lever it looks like.
         if not fts.empty and not vec.empty:
             new = fts[~fts["chunk_key"].isin(set(vec["chunk_key"]))]
             if not new.empty:
                 new = new.copy()
-                new["_distance"] = float(vec["_distance"].max()) * 1.01
+                new["_distance"] = float(vec["_distance"].max()) * _BACKSTOP
                 vec = pd.concat([vec, new], ignore_index=True)
         elif vec.empty and not fts.empty:
+            # Nothing from the vector branch: the backstop IS the pool.
             vec = fts.copy()
             vec["_distance"] = 1.0
         if vec.empty:

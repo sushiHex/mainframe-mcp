@@ -19,7 +19,7 @@ remains available for reference and rollback.
 
 | Capability | v1 server | v2 preview |
 |---|---|---|
-| Hybrid search and native reranking | Yes | Yes |
+| Semantic search (keyword backstop) and native reranking | Yes | Yes |
 | Immutable captures, indexing, search | Yes | Yes |
 | Consolidation and contradiction detection | Yes | Not implemented |
 | RAPTOR summary clusters | Yes | Not implemented |

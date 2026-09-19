@@ -1,7 +1,8 @@
 # Mainframe MCP
 
-Mainframe indexes local Markdown and provides hybrid semantic/keyword search
-with reranking. Files are authoritative; the index is disposable. The public
+Mainframe indexes local Markdown and provides semantic search with reranking,
+backstopped by keyword matching when the vector branch returns too few
+candidates (`core/store.search` explains why it is a backstop and not a merge). Files are authoritative; the index is disposable. The public
 repository is the development home. Read `AGENTS.md`, `CONTRIBUTING.md`, and
 `docs/PUBLIC_AUDIT.md` before contributing or publishing.
 
