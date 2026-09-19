@@ -148,6 +148,86 @@ def test_index_health_reports_index_presence(store, fake_embedder):
     assert cols == [("chunk_key",), ("text",)]
 
 
+class _Branch:
+    """The slice of LanceDB's query builder that `Store.search` actually uses."""
+
+    def __init__(self, df):
+        self.df = df
+
+    def limit(self, n):
+        return _Branch(self.df.head(n))
+
+    def where(self, _w):
+        return self
+
+    def to_pandas(self):
+        return self.df.copy()
+
+
+class _SplitBranches:
+    """Vector search returns ONLY `vec_df`; FTS returns ONLY `fts_df`.
+
+    Holding the branches apart is the only way to test the merge: on a shared
+    corpus the vector branch tends to find the keyword hit too, and then the
+    test passes whether or not the keyword branch can contribute anything."""
+
+    def __init__(self, real, vec_df, fts_df):
+        self.real, self.vec_df, self.fts_df = real, vec_df, fts_df
+
+    def search(self, query=None, query_type=None, **kw):
+        return _Branch(self.fts_df if query_type == "fts" else self.vec_df)
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+def _split(store, fake_embedder, n_filler=6):
+    """A store whose vector branch knows only filler and whose keyword branch
+    knows only `rare.md`."""
+    docs = [_rows(fake_embedder, f"c:/r/p/docs/f{i}.md", [f"filler {i}"]) for i in range(n_filler)]
+    store.upsert_batch(docs + [_rows(fake_embedder, "c:/r/p/docs/rare.md", ["zzqx7 marker"])])
+    store.optimize()
+    all_rows = store.table.to_lance().to_table().to_pandas()
+    needle = all_rows[all_rows["doc_path"] == "c:/r/p/docs/rare.md"]
+    filler = all_rows[all_rows["doc_path"] != "c:/r/p/docs/rare.md"].copy()
+    filler["_distance"] = [0.1 * (i + 1) for i in range(len(filler))]
+    store.table = _SplitBranches(store.table, filler, needle)
+    return store
+
+
+def test_keyword_hits_never_displace_a_vector_hit(store, fake_embedder):
+    """IF YOU ARE HERE BECAUSE THE KEYWORD BRANCH LOOKS DEAD: it is a backstop,
+    and this test says so deliberately rather than by accident.
+
+    Whether admitting keyword candidates would HELP is open (issue #40): it was
+    tried, and the A/B was invalid because the live index gains documents while
+    the daemon serves, so the two arms ran against different corpora. What that
+    work did establish is that the queries keyword search finds and the answer
+    misses were already in the vector pool - the reranker had them and ranked
+    them out - so this is not the obvious lever it looks like.
+
+    Changing it needs a measurement against a FROZEN index (copy the store,
+    score in-process with `--db`), not a reading of this code and not another
+    run against the live daemon."""
+    _split(store, fake_embedder)
+    pool = store.search([0.0] * 64, top_k=6, query_text="zzqx7")
+    assert len(pool) == 6
+    assert not any(r["doc_path"] == "c:/r/p/docs/rare.md" for r in pool), \
+        "a full vector pool must not be displaced by keyword hits (see issue #40)"
+
+
+def test_keyword_hits_fill_the_room_the_vector_branch_leaves(store, fake_embedder):
+    """The other half of the contract: a backstop is not a dead branch. When the
+    vector branch is short - a small corpus, or heavy filtering - keyword hits
+    are what keeps the pool full, and removing them would be a real regression."""
+    _split(store, fake_embedder, n_filler=2)
+    pool = store.search([0.0] * 64, top_k=6, query_text="zzqx7")
+    assert any(r["doc_path"] == "c:/r/p/docs/rare.md" for r in pool), \
+        "the vector branch left room; the keyword backstop must fill it"
+    assert [r["doc_path"] for r in pool][:2] == ["c:/r/p/docs/f0.md", "c:/r/p/docs/f1.md"], \
+        "and it fills BELOW the vector hits, never above them"
+
+
 class _FtsBroken:
     """A table whose FTS queries fail the way a dangling fragment reference
     does, while every other operation works and `list_indices` keeps reporting

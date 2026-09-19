@@ -157,7 +157,19 @@ and shows paired bootstrap intervals plus every gained/lost query.
 
 `--db` and `--rebuild` refuse while the configured daemon is running. Explicit
 `--in-process` and candidate dumps load their own models; stop other GPU-heavy
-work first. Compare discovery with a v1 manifest using
+work first.
+
+**Do not compare two code versions with `--daemon`.** A serving daemon keeps
+indexing: captures land, watched files change, and the row count moves between
+runs, so the two arms score different corpora and the difference is attributed
+to the code. This is not hypothetical — it produced a confident 0.022
+"regression" that was the corpus, caught only because a comment-only change
+appeared to move the score (issue #40).
+
+A retrieval A/B needs a frozen index: stop the daemon, copy `index.lancedb` to a
+scratch path, and score both arms with `--db <copy>`. Confirm both report the
+same row count before comparing composites. `--daemon` is for scoring what is
+running right now, which is a different question from whether a change helped. Compare discovery with a v1 manifest using
 `python -u eval/corpus_identity.py path/to/.manifest.json`. The gate fails when
 a still-existing manifest file is missing from the v2 scan; new files and
 content changes are reported separately.
