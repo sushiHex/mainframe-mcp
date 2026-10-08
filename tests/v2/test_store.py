@@ -321,6 +321,31 @@ def test_a_healthy_keyword_index_is_never_recreated(store, fake_embedder):
     assert counting.recreated == 0 and store.fts_error is None
 
 
+def _fts(store, term):
+    return store.table.search(term, query_type="fts").limit(10).to_pandas()
+
+
+def test_optimize_never_hands_lance_an_index_over_a_vanished_fragment(store, fake_embedder):
+    """Issue #49 (mechanism: `Store._vanished_indexed_fragments`). Nothing here
+    is compacted - ordinary upserts and optimizes are the whole trigger, as in
+    production."""
+    a = "c:/r/p/docs/a.md"
+    store.upsert_batch([_rows(fake_embedder, a, ["alpha one", "alpha two"])])
+    assert store.optimize()                                             # FTS covers {0}
+    store.upsert_batch([_rows(fake_embedder, "c:/r/p/docs/b.md", ["beta one"])])
+    assert store.optimize()                                             # merge: FTS covers {0, 1}
+    store.upsert_batch([_rows(fake_embedder, a, ["alpha one edited", "alpha two edited"], file_hash="fh2")])
+    live = {f.fragment_id for f in store.table.to_lance().get_fragments()}
+    assert 0 not in live, "editing every row of fragment 0 makes lance drop the fragment"
+    assert store._vanished_indexed_fragments() == {0}, "the index still covers it"
+    assert len(_fts(store, "alpha")) == 2, "a covered-but-missing fragment is masked, not broken"
+
+    assert store.optimize()                                             # the merge that used to dangle it
+    assert sorted(_fts(store, "alpha")["text"]) == ["alpha one edited", "alpha two edited"]
+    assert store.search(fake_embedder.embed_query("alpha"), top_k=5, query_text="alpha")
+    assert store.index_health()["keyword_search"] == {"ok": True, "error": None}
+
+
 def test_search_snapshots_the_table_against_a_concurrent_drop(store, fake_embedder):
     """`search` runs on to_thread workers while `rebuild` -> `drop()` nulls
     `self.table` on the writer thread. Re-reading the attribute inside the
