@@ -296,39 +296,66 @@ class Store:
         except Exception:
             return False
 
+    def _vanished_indexed_fragments(self) -> set:
+        """Fragment ids the FTS index still covers but the dataset no longer has.
+
+        Re-indexing every document in a fragment deletes all of its rows, and
+        lance then drops the fragment itself. The postings naming its rows are
+        HARMLESS while the fragment stays in the index's bitmap: the query
+        prefilter masks every row of a covered-but-missing fragment. What breaks
+        them is the index MERGE inside `table.optimize()`, which recomputes the
+        bitmap from the fragments that exist while copying every old posting
+        as-is (lance 3.0.0 `index/append.rs` intersects the bitmap, and the
+        inverted index ignores the `valid_old_fragments` it is handed). From
+        then on nothing masks those rows, and any query whose matches include
+        one fails with "fragment id N does not exist" (issue #49)."""
+        ds = self.table.to_lance()
+        live = {f.fragment_id for f in ds.get_fragments()}
+        covered = set()
+        for index in ds.describe_indices():
+            if list(index.field_names) == ["text"]:
+                for segment in index.segments:
+                    covered |= set(segment.fragment_ids)
+        return covered - live
+
+    def _fts_rebuild_reason(self) -> str | None:
+        """Why the FTS postings must be rebuilt from the live rows now, or None.
+
+        Three reasons, ONE build path (`_ensure_indexes`), so the clearing of
+        `fts_error` cannot be forgotten on one of them. The first is an OBSERVED
+        failure, not a probe: a synthetic query only fails if it happens to
+        match rows in a missing fragment, so a probe reports health it has not
+        established, and `search` records what the real workload sees. The
+        third is the state that the next merge would turn into the first."""
+        if self.fts_error is not None:
+            return f"a query failed: {self.fts_error}"
+        if not self._has_index("text"):
+            return "no index yet"
+        vanished = self._vanished_indexed_fragments()
+        if vanished:
+            return f"it covers fragments the dataset no longer has: {sorted(vanished)}"
+        return None
+
     def _ensure_indexes(self) -> bool:
         """FTS on text + BTREE on chunk_key, created lazily once rows exist
         (an empty table cannot be indexed). Idempotent.
 
-        An index that EXISTS is not an index that ANSWERS. After a large delete
-        the FTS postings can still reference a fragment the dataset no longer
-        has, and every query matching those rows fails with "the input to a take
-        operation specified fragment id N but this fragment does not exist" -
-        while `_has_index("text")` keeps reporting the index as present, so this
-        method used to leave it broken forever and `optimize` returned ok beside
-        it. Recreating it rebuilds the postings from the current dataset, which
-        is what actually clears the dangling reference.
-
-        The trigger is an OBSERVED failure (`fts_error`), not a probe: a
-        synthetic query only fails if it happens to match rows in the missing
-        fragment, so a probe reports health it has not established. The real
-        workload is the only honest detector, and `search` records what it sees.
+        An index that EXISTS is not an index that ANSWERS: `_has_index("text")`
+        reports a dangling index as present, so this method used to leave it
+        broken forever and `optimize` returned ok beside it. Recreating it
+        rebuilds the postings from the current dataset, which is what actually
+        clears a dangling reference - and, done BEFORE lance merges the index,
+        what prevents one (`_vanished_indexed_fragments`).
         """
         if self.table is None:
             return True
         try:
             if self.table.count_rows() == 0:
                 return True
-            # ONE build path, so the clearing cannot be forgotten on one of them.
-            # Missing and broken both mean "these postings are not usable", and a
-            # branch that created the index without clearing `fts_error` would
-            # report a healthy index as broken and then rebuild every posting on
-            # the next optimize to fix a flag.
-            failure = self.fts_error
-            if failure is not None or not self._has_index("text"):
+            reason = self._fts_rebuild_reason()
+            if reason:
                 self.table.create_fts_index("text", replace=True)
-                logger.info(f"Rebuilt FTS index on text after a failure: {failure}" if failure
-                            else "Created FTS index on text")
+                logger.info(f"Built FTS index on text ({reason})")
                 self.fts_error = None
             if not self._has_index("chunk_key"):
                 self.table.create_scalar_index("chunk_key", index_type="BTREE")
@@ -382,11 +409,19 @@ class Store:
         return BatchResult(len(rows), len(docs), len(deleted))
 
     def optimize(self) -> bool:
-        """Compact and clean up versions older than the cleanup window, then
-        ensure the FTS/BTREE indexes exist. Returns True only when both steps
-        succeeded (or there is no table yet)."""
+        """Ensure the FTS/BTREE indexes answer, THEN compact and clean up
+        versions older than the cleanup window. Returns True only when both
+        steps succeeded (or there is no table yet).
+
+        The order is load-bearing: `table.optimize()` also merges new rows into
+        the existing indexes, and that merge is what turns an index over a
+        vanished fragment from masked into dangling
+        (`_vanished_indexed_fragments`). An index already dangling - or one
+        dangled because the check above failed - no longer shows a vanished
+        fragment, so the observed-failure trigger (`fts_error`) repairs it."""
         if self.table is None:
             return True
+        idx = self._ensure_indexes()
         ok = True
         try:
             self.table.optimize(cleanup_older_than=self.cleanup)
@@ -399,7 +434,6 @@ class Store:
         except Exception as e:
             logger.warning(f"optimize failed (non-fatal): {e}")
             ok = False
-        idx = self._ensure_indexes()
         return ok and idx
 
     def drop(self):
