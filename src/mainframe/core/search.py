@@ -1,4 +1,4 @@
-"""The read path: embed → hybrid candidates → rerank → shape.
+"""The read path: embed → candidates (vector, keyword-backstopped) → rerank → shape.
 LLM-free; the only models touched are the embedder and the reranker."""
 
 from pathlib import Path

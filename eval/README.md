@@ -169,7 +169,9 @@ appeared to move the score (issue #40).
 A retrieval A/B needs a frozen index: stop the daemon, copy `index.lancedb` to a
 scratch path, and score both arms with `--db <copy>`. Confirm both report the
 same row count before comparing composites. `--daemon` is for scoring what is
-running right now, which is a different question from whether a change helped. Compare discovery with a v1 manifest using
+running right now, which is a different question from whether a change helped.
+
+Compare discovery with a v1 manifest using
 `python -u eval/corpus_identity.py path/to/.manifest.json`. The gate fails when
 a still-existing manifest file is missing from the v2 scan; new files and
 content changes are reported separately.

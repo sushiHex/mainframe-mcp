@@ -196,19 +196,10 @@ def _split(store, fake_embedder, n_filler=6):
 
 
 def test_keyword_hits_never_displace_a_vector_hit(store, fake_embedder):
-    """IF YOU ARE HERE BECAUSE THE KEYWORD BRANCH LOOKS DEAD: it is a backstop,
-    and this test says so deliberately rather than by accident.
-
-    Whether admitting keyword candidates would HELP is open (issue #40): it was
-    tried, and the A/B was invalid because the live index gains documents while
-    the daemon serves, so the two arms ran against different corpora. What that
-    work did establish is that the queries keyword search finds and the answer
-    misses were already in the vector pool - the reranker had them and ranked
-    them out - so this is not the obvious lever it looks like.
-
-    Changing it needs a measurement against a FROZEN index (copy the store,
-    score in-process with `--db`), not a reading of this code and not another
-    run against the live daemon."""
+    """IF YOU ARE HERE BECAUSE THE KEYWORD BRANCH LOOKS DEAD: it is a backstop
+    on purpose. Admitting keyword candidates was measured and lost (issue #40;
+    the numbers are at the merge in `Store.search`). Changing this needs a
+    frozen-index A/B (`eval/README.md`), not a reading of this code."""
     _split(store, fake_embedder)
     pool = store.search([0.0] * 64, top_k=6, query_text="zzqx7")
     assert len(pool) == 6
