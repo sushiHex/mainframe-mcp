@@ -75,12 +75,25 @@ First use downloads missing model revisions from Hugging Face and indexes the se
 
 ## Connect your agent
 
-Start the daemon separately. Every client should use the same configuration.
+Start the daemon separately. Every client should use the same configuration. Opening or closing a client neither loads another set of models nor stops the daemon: `mainframe-mcp` only forwards requests, and the daemon runs until `mainframe down`.
 
 For **Claude Code**, register the stdio connection across your projects:
 
 ```sh
 claude mcp add --scope user mainframe -- mainframe-mcp
+```
+
+For **Codex CLI**, the same command shape writes `~/.codex/config.toml`:
+
+```sh
+codex mcp add mainframe -- mainframe-mcp
+```
+
+which is equivalent to this entry in that file:
+
+```toml
+[mcp_servers.mainframe]
+command = "mainframe-mcp"
 ```
 
 For hosts that use an `mcpServers` configuration block:
@@ -97,7 +110,9 @@ For hosts that use an `mcpServers` configuration block:
 
 The command must be on the host's PATH. Alternatively, use the installed environment's Python executable with arguments `-u -m mainframe.adapters.mcp_stdio_shim`. This forwards requests without loading models in the client process.
 
-**HTTP clients** can connect to `http://127.0.0.1:7433/mcp` using Streamable HTTP. Use `/mcp/ro` for search and status only. See [client setup](docs/V2.md#connect-clients) for configuration and authentication.
+**Choose stdio or HTTP by how the client finds the port.** The stdio client reads the daemon's discovery file, so it follows whatever port the daemon bound, including a fresh ephemeral port after every restart when `service.port` is `0`. A **Streamable HTTP client** has only the URL you configure, so it needs a fixed `service.port` (the default, `7433`, is fixed): register `http://127.0.0.1:7433/mcp`, or `/mcp/ro` for search and status only. See [client setup](docs/V2.md#connect-clients) for the HTTP examples and authentication.
+
+If a tool call answers ``mainframed is not running - run `mainframe up` ``, start the daemon; the client reconnects on its next call without restarting the session. A client started before the daemon behaves the same way.
 
 Once connected, ask your agent:
 
