@@ -104,6 +104,14 @@ an incomplete queue, or index drift. The full endpoint also exposes
 `maintain`: `index`/`rescan`, `optimize`, and `reload`; the read-only `/mcp/ro`
 endpoint offers only `search` and `status`.
 
+A connection error is actionable. ``mainframed unreachable: mainframed is not
+running - run `mainframe up` `` means no daemon answers: ask the user to run
+`mainframe up`, then call again - the client reconnects by itself, so the
+session need not restart. Any other `mainframed unreachable` message is a
+transport failure after the daemon may have received the request; the client
+does not resend those, so before repeating a `capture`, search with
+`include_sessions: true` for the note you just wrote.
+
 An embedding or chunking configuration change can require an offline rebuild.
 Changing only the reranker does not: it reorders the existing first-stage
 candidates. For an embedding or chunking change, stop the daemon, then run
