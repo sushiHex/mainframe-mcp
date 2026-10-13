@@ -2,7 +2,10 @@
 offline paths (serve, rebuild-under-lock) and the Task Scheduler installer."""
 
 import argparse
+import getpass
+import io
 import json
+import os
 import subprocess
 import sys
 import time
@@ -75,11 +78,27 @@ class DaemonClient:
 
 
 def task_xml(config: dict) -> str:
-    exe, wd = escape(sys.executable), escape(config["paths"]["mainframe_dir"])
+    # An InteractiveToken task running python.exe opens a console at every
+    # logon; pythonw.exe beside it is the same interpreter without one.
+    windowless = Path(sys.executable).with_name("pythonw.exe")
+    exe = escape(str(windowless) if windowless.exists() else sys.executable)
+    wd = escape(config["paths"]["mainframe_dir"])
+    # The task fires at, and runs as, the logon of the user who registers it.
+    # A trigger on ANY user's logon is what made registering it need an
+    # elevated shell; scoped to its own user it needs no prompt at all.
+    domain = os.environ.get("USERDOMAIN")
+    user = escape(f"{domain}\\{getpass.getuser()}" if domain else getpass.getuser())
     return f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Description>Mainframe v2 resident daemon (mainframed)</Description></RegistrationInfo>
-  <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>
+  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{user}</UserId></LogonTrigger></Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{user}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
   <Settings>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
@@ -220,9 +239,8 @@ def start_daemon(config, runner, spawn, http=None, timeout=START_WAIT_SECONDS) -
     """Make a daemon exist AND answer, or say why one does not.
 
     Prefers the logon task, so that a manual start runs what logon runs. When no
-    task answers - Task Scheduler refuses to register one without elevation on
-    some machines - it falls back to a detached `serve` and says so, because the
-    remedy for "the scheduler is out of reach" is not "give up".
+    task answers - none is registered yet - it falls back to a detached `serve`
+    and says so, because the remedy for "no task" is not "give up".
 
     It returns only once `/healthz` answers - and then, if the daemon is
     warming up, once that is over (`wait_ready`). Returning when the LAUNCHER returned
@@ -377,6 +395,11 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
         return 0
     if args.cmd == "serve":
         from mainframe.service.daemon import serve
+        if sys.stderr is None:         # pythonw (the logon task): keep what a crash says
+            sink = _open_log(daemon_out(config))
+            if sink is not None:
+                sys.stdout = sys.stderr = io.TextIOWrapper(sink, encoding="utf-8", errors="backslashreplace",
+                                                           line_buffering=True)
         serve(config)
         return 0
     if args.cmd == "install-task":

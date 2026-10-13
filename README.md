@@ -134,6 +134,22 @@ mainframe down
 
 Captures live in the configured state directory (`~/.claude/mainframe/captures/` by default) and are indexed asynchronously. Ordinary search excludes them; `--sessions` includes them. `down` finishes active work and stops the daemon to release its model memory. See the [daemon guide](docs/V2.md) for startup automation, diagnostics, and offline rebuilding.
 
+On Windows, run `mainframe install-task` once (no elevated shell needed) for a windowless daemon that starts at logon, then `mainframe up`. Set `service.prewarm: true` to load the models at start; `up` then returns once the daemon is ready, and they hold about 3.7 GB of VRAM until `mainframe reload` releases them.
+
+## Troubleshooting
+
+`mainframe status` reports `readiness` as `ready`, `idle`, `warming`, or `blocked`, with a reason that names the remedy.
+
+| Symptom | Cause and remedy |
+| --- | --- |
+| An agent reports ``mainframed is not running - run `mainframe up` `` | The daemon is down: it was stopped, or it died, and the logon task does not restart a daemon that dies. Run `mainframe up`; the client reconnects on its next call. |
+| `up` says no logon task answered | No task is registered, so `up` started a detached daemon that will not survive a reboot. Run `mainframe install-task` once. |
+| `readiness` is `blocked` with a model error | A model failed to load and is backing off. The reason carries the error and guidance; `mainframe reload` clears the backoff. |
+| `readiness` is `blocked` with "index built under different settings" | An embedding or chunking setting changed. Run `mainframe down`, then `mainframe rebuild`. |
+| The first search after a restart is slow | The models load on first use. Enable `service.prewarm`. |
+| `daemon.log` warns that keyword search is failing | The keyword index needs rebuilding. The next optimization does it automatically; `mainframe optimize` does it now. |
+| A daemon started by the logon task died | It writes what a crash says to `daemon.out` in the state directory. |
+
 ## For agents
 
 The default MCP endpoint exposes four tools:

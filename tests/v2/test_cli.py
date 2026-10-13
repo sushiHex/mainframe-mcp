@@ -1,6 +1,7 @@
 import builtins
 import json
 import subprocess
+import sys
 import urllib.parse
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -470,6 +471,49 @@ def test_task_xml_and_install_dry_run(cfg, capsys):
     assert cli.main(["install-task"], config=cfg, runner=lambda argv: ran.append(argv) or 0) == 0
     assert ran and ran[0][0] == "schtasks" and Path(ran[0][-1]).exists()
     assert cli.main(["install-task", "--dry-run"], config=cfg) == 0 and "schtasks" in capsys.readouterr().out
+
+
+def test_the_logon_task_runs_without_a_console_window(cfg, tmp_path, monkeypatch):
+    """An InteractiveToken task running python.exe opens a console at every
+    logon. pythonw.exe, installed beside it, is the same interpreter without
+    one; where there is none (not Windows), the interpreter stays as it is."""
+    (tmp_path / "python.exe").touch()
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "python.exe"))
+    assert "<Command>" + str(tmp_path / "python.exe") + "</Command>" in cli.task_xml(cfg)
+    (tmp_path / "pythonw.exe").touch()
+    assert "<Command>" + str(tmp_path / "pythonw.exe") + "</Command>" in cli.task_xml(cfg)
+
+
+def test_the_logon_task_belongs_to_the_user_who_registers_it(cfg, monkeypatch):
+    """A trigger on ANY user's logon needs an elevated shell to register; one
+    scoped to the registering user, run with their own non-elevated token, does
+    not. That difference is the whole of 'install-task needs admin'."""
+    monkeypatch.setenv("USERDOMAIN", "HOST")
+    monkeypatch.setattr("getpass.getuser", lambda: "alice")
+    root = ET.fromstring(cli.task_xml(cfg).split("\n", 1)[1])
+    ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+    assert root.find("t:Triggers/t:LogonTrigger/t:UserId", ns).text == "HOST\\alice"
+    principal = root.find("t:Principals/t:Principal", ns)
+    assert principal.find("t:UserId", ns).text == "HOST\\alice"
+    assert principal.find("t:LogonType", ns).text == "InteractiveToken"
+    assert principal.find("t:RunLevel", ns).text == "LeastPrivilege"
+
+
+def test_a_windowless_serve_keeps_what_a_crash_says(cfg, monkeypatch):
+    """Under pythonw there is no stderr, so nothing - not even a traceback -
+    would say why the logon task's daemon died. `serve` adopts daemon.out, the
+    file `spawn_detached` already hands its child."""
+    import mainframe.service.daemon as daemon_mod
+
+    def crashing_serve(_config):
+        print("traceback would land here", file=sys.stderr)
+
+    monkeypatch.setattr(daemon_mod, "serve", crashing_serve)
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    assert cli.main(["serve"], config=cfg) == 0
+    sys.stderr.flush()
+    assert "traceback would land here" in cli.daemon_out(cfg).read_text(encoding="utf-8")
 
 
 def test_down_waits_for_lock(cfg, monkeypatch):
