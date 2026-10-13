@@ -27,6 +27,7 @@ NO_SCHTASKS = ("mainframe: Task Scheduler is Windows-only; run `mainframe serve`
                "(service units for other platforms are planned)")
 NO_TASK_FALLBACK = ("mainframe: no logon task answered; starting a detached `serve` instead. "
                     "Run `mainframe install-task` once for a daemon that returns after a reboot.")
+PREWARM_HINT = " (service.prewarm: true loads the models at start and makes `up` wait until it is ready)"
 START_WAIT_SECONDS = 120
 START_POLL_SECONDS = 1.0
 LOG_WAIT_SECONDS = 5.0      # a handoff takes moments; anything longer is another holder
@@ -100,6 +101,15 @@ def task_xml(config: dict) -> str:
 
 def schtasks_command(xml_path: Path) -> list:
     return ["schtasks", "/Create", "/F", "/TN", TASK_NAME, "/XML", str(xml_path)]
+
+
+def quiet_call(argv) -> int:
+    """The exit code, with the command's own output kept off the terminal:
+    the `runner` for the `schtasks /Run` PROBE in `up`/`restart`, where a
+    machine with no logon task printed schtasks' 'cannot find the file' right
+    above our explanation of that very case. `install-task` runs the user's
+    own command, and schtasks' output IS its report - that one stays loud."""
+    return subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
 
 
 def run_offline_rebuild(config: dict, app=None) -> dict:
@@ -214,7 +224,8 @@ def start_daemon(config, runner, spawn, http=None, timeout=START_WAIT_SECONDS) -
     some machines - it falls back to a detached `serve` and says so, because the
     remedy for "the scheduler is out of reach" is not "give up".
 
-    It returns only once `/healthz` answers. Returning when the LAUNCHER returned
+    It returns only once `/healthz` answers - and then, if the daemon is
+    warming up, once that is over (`wait_ready`). Returning when the LAUNCHER returned
     is the defect this exists to close: a launcher can exit cleanly having
     produced no process at all, and the caller cannot tell. On failure the growth
     of `daemon.out` separates "it started and died" from "nothing ever ran",
@@ -239,7 +250,7 @@ def start_daemon(config, runner, spawn, http=None, timeout=START_WAIT_SECONDS) -
     deadline = time.monotonic() + timeout
     while True:
         if probe(config, http) is not None:
-            return 0
+            return wait_ready(config, http, deadline)
         if time.monotonic() >= deadline:
             break
         time.sleep(START_POLL_SECONDS)
@@ -259,6 +270,41 @@ def start_daemon(config, runner, spawn, http=None, timeout=START_WAIT_SECONDS) -
     print(f"mainframe: started {how} but no daemon answered within {int(timeout)} s - {tail}",
           file=sys.stderr)
     return 1
+
+
+def wait_ready(config, http, deadline) -> int:
+    """Answering is not ready. A daemon answers `/healthz` the moment it binds,
+    with both models absent; `readiness` in that same body says whether a
+    search would be served by resident models, and the DAEMON says which -
+    no config is consulted here.
+
+    `warming` is the one state worth waiting on: the daemon is working toward
+    ready by itself. `ready` is 0. `idle` is 0 too - nothing loads until a
+    search, so waiting would wait forever; say so and name the key that changes
+    it. `blocked` is final (a failed load backs off for minutes; polling a
+    timeout against it would report the timeout instead of the failure and its
+    remedy), so it is reported at once. A body with no `readiness` at all is a
+    daemon from before the field, answering the old contract: 0."""
+    while True:
+        info = probe(config, http)
+        if info is None:
+            print("mainframe: daemon stopped answering while warming up", file=sys.stderr)
+            return 1
+        rd = info["health"].get("readiness")
+        if rd is None or rd.get("state") == "ready":
+            return 0
+        reason = rd.get("reason")
+        if rd.get("state") == "idle":
+            print(f"mainframe: daemon answering; {reason}{PREWARM_HINT}", file=sys.stderr)
+            return 0
+        if rd.get("state") != "warming":
+            print(f"mainframe: daemon answering but {rd.get('state')} - {reason}", file=sys.stderr)
+            return 1
+        if time.monotonic() >= deadline:
+            print(f"mainframe: daemon answering but still warming ({reason}); "
+                  "raise `--timeout` to wait longer", file=sys.stderr)
+            return 1
+        time.sleep(START_POLL_SECONDS)
 
 
 def wait_for_lock(config) -> int:
@@ -298,10 +344,11 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
     p = argparse.ArgumentParser(prog="mainframe", description="Mainframe v2: local knowledge base daemon")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("serve", help="run the daemon in the foreground")
-    u = sub.add_parser("up", help="start the daemon and wait until it answers")
+    u = sub.add_parser("up", help="start the daemon and wait until it answers (and is done warming up)")
     u.add_argument("--timeout", type=float, default=START_WAIT_SECONDS)
     sub.add_parser("down", help="ask the daemon to stop and wait for it")
-    r = sub.add_parser("restart", help="stop the daemon if it is running, start it, and confirm it answers")
+    r = sub.add_parser("restart", help="stop the daemon if it is running, start it, and confirm it answers "
+                                       "(and is done warming up)")
     r.add_argument("--timeout", type=float, default=START_WAIT_SECONDS)
     sub.add_parser("status")
     s = sub.add_parser("search"); s.add_argument("query"); s.add_argument("--sessions", action="store_true")
@@ -319,7 +366,6 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
     v.add_argument("--timeout", type=float, default=2400, help="maximum seconds for an indexing/visibility check")
     args = p.parse_args(argv)
     config = config or load_config()
-    runner = runner or subprocess.call
 
     if args.cmd == "validate":
         from mainframe.adapters.validation import ValidationRun
@@ -342,7 +388,7 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
             print(" ".join(cmd))
             return 0
         try:
-            return runner(cmd)
+            return (runner or subprocess.call)(cmd)   # the user's own command: schtasks' output is the report
         except OSError:               # no schtasks: not Windows
             print(NO_SCHTASKS, file=sys.stderr)
             return 1
@@ -351,11 +397,12 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
         return 0
 
     client = DaemonClient(config, http)
+    runner = runner or quiet_call                 # from here `runner` only ever runs the `/Run` probe
     spawn = spawn or spawn_detached
     if args.cmd == "up":
         if client.alive():
-            print("mainframe: daemon already running")
-            return 0
+            print("mainframe: daemon already running")     # answering - which is not yet ready
+            return wait_ready(config, client.http, time.monotonic() + args.timeout)
         return start_daemon(config, runner, spawn, client.http, args.timeout)
     if args.cmd == "restart":
         if client.alive():

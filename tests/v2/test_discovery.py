@@ -40,6 +40,9 @@ def test_probe_returns_the_info_only_for_a_matching_live_daemon(cfg):
     info = probe(cfg, http=http)
     assert info["port"] == 1234 and info["nonce"] == "n1" and info["pid"]
     assert http.urls == ["http://127.0.0.1:1234/healthz"] and http.headers == {}
+    # the health it read comes along, so a caller asking "answering AND ready?"
+    # does not pay for a second GET on every poll
+    assert info["health"] == {"ok": True, "nonce": "n1"}
 
 
 def test_probe_sends_the_bearer_token_when_one_is_configured(cfg):

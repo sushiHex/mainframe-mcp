@@ -44,6 +44,8 @@ def probe(config, http=None) -> dict | None:
     Never raises: an unreachable port, a foreign service, a stale nonce and a
     missing file are all simply "not running" to a caller. `http` is any object
     with `.get(url, headers=...)` (the caller's pooled client, or a fake).
+    The `/healthz` body it read comes along as `health`, so a caller asking
+    "answering AND ready?" pays for one GET per poll, not two.
     """
     info = read_discovery(config)
     if not info:
@@ -58,7 +60,7 @@ def probe(config, http=None) -> dict | None:
         r = client.get(f"http://127.0.0.1:{info['port']}/healthz", headers=headers)
         body = r.json()
         if r.status_code == 200 and body.get("ok") and body.get("nonce") == info.get("nonce"):
-            return info
+            return dict(info, health=body)
     except Exception:
         return None
     return None

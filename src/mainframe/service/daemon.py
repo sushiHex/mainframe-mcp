@@ -122,9 +122,9 @@ class Daemon:
             logger.warning(f"watcher failed to start: {e}")
         self.scheduler.start()
         app.events.emit("daemon.start", pid=os.getpid(), port=self.port, version=__version__, nonce=self.nonce)
-        app.submit("rescan", wait=False)                   # reconcile what changed while we were down
+        first = app.submit("rescan", wait=False)           # reconcile what changed while we were down
         if self.config["service"].get("prewarm"):
-            app.models.prewarm(background=True)
+            app.start_warm_up(first)                      # ... then load, search once, and be READY
         self._started = True        # from here the lifespan owns the discovery file's removal
 
     def _stop(self):

@@ -355,3 +355,240 @@ def test_success_is_recorded_once_before_the_result_is_visible(cfg, store, tmp_p
     finally:
         if app.mutations is not None:
             assert app.mutations.stop(timeout=5)
+
+
+# ---- readiness: distinct from answering ----
+
+IDLE = {"state": "idle", "reason": "embedder absent; it loads on the first search"}
+READY = {"state": "ready", "reason": None}
+
+
+def _raises(*_a, **_k):
+    raise AssertionError("readiness must never resolve a model")
+
+
+def _settled(result=None, exc=None):
+    """A stand-in for the initial rescan's future, already finished."""
+    from concurrent.futures import Future
+    fut = Future()
+    if exc is not None:
+        fut.set_exception(exc)
+    else:
+        fut.set_result(result)
+    return fut
+
+
+def _models(cfg, embedder=None, reranker=None, **kw):
+    from mainframe.core.models import Models
+    from v2.conftest import FakeEmbedder, FakeReranker
+    return Models(cfg, embedder_factory=embedder or (lambda c: FakeEmbedder()),
+                  reranker_factory=reranker or (lambda c: FakeReranker()), **kw)
+
+
+def test_readiness_is_bookkeeping_only(cfg, store, tmp_path, monkeypatch):
+    """Readiness answers from the registry's metadata, exactly as /healthz does:
+    resolving a model is the one thing it must never do, or a health check
+    could load one."""
+    app = _app(cfg, store, tmp_path)
+    monkeypatch.setattr(type(app.models), "_get", _raises)
+    assert app.readiness() == IDLE
+
+
+def test_readiness_follows_live_model_state(cfg, store, tmp_path):
+    app = _app(cfg, store, tmp_path)
+    write_md(Path(cfg["paths"]["repos_dir"]) / "p" / "docs" / "a.md", "# T\n\nqwen3 reranker text.\n")
+    app.submit("rescan")
+    assert app.readiness() == {"state": "idle", "reason": "reranker absent; it loads on the first search"}
+    app.search("qwen3 reranker")
+    assert app.readiness() == READY
+    assert app.status()["readiness"] == READY
+
+
+def test_warm_up_after_the_initial_rescan_makes_the_app_ready(cfg, store, tmp_path):
+    """Prewarm is the readiness mechanism: it constructs both models AND runs one
+    real search, after the initial rescan, so "ready" means the read path has
+    run once — `Models.prewarm` alone only constructs. Readiness names the
+    phase while that is in progress, and nothing afterwards: the warm-up is
+    an action, not a state."""
+    from concurrent.futures import Future
+    from v2.conftest import FakeReranker
+
+    reranks = []
+
+    class CountingReranker(FakeReranker):
+        def rerank(self, *a, **kw):
+            reranks.append(1)
+            return super().rerank(*a, **kw)
+
+    app = Mainframe(cfg, models=_models(cfg, reranker=lambda c: CountingReranker()),
+                    events=EventStore(tmp_path / "ev.db"), store=store)
+    write_md(Path(cfg["paths"]["repos_dir"]) / "p" / "docs" / "a.md", "# T\n\nqwen3 reranker text.\n")
+    app.submit("rescan")
+    first = Future()
+    thread = app.start_warm_up(first)
+    assert app.readiness() == {"state": "warming", "reason": "waiting for the initial rescan"}
+    assert reranks == []                               # nothing runs before reconciliation
+    first.set_result(None)
+    thread.join(10)
+    assert not thread.is_alive()
+    assert app.readiness() == READY and app.warm_up is None
+    assert reranks == [1]
+    last = app.events.recent(1)[0]
+    assert last["kind"] == "daemon.warm_up" and last["detail"] == {"ok": True}
+
+
+def test_a_failed_initial_rescan_does_not_fail_the_warm_up(cfg, store, tmp_path):
+    """The rescan reports and retries its own failure; the warm-up still runs."""
+    app = _app(cfg, store, tmp_path)
+    app.start_warm_up(_settled(exc=RuntimeError("transient rescan failure"))).join(10)
+    assert app.readiness() == READY
+
+
+def test_warm_up_accepts_an_inline_rescan_result(cfg, store, tmp_path):
+    """With no queue attached `submit(wait=False)` returns the job's RESULT,
+    not a future; the warm-up must not fail on it."""
+    app = _app(cfg, store, tmp_path)
+    app.start_warm_up(app.submit("rescan", wait=False)).join(10)
+    assert app.readiness() == READY
+
+
+def test_warm_up_abstains_during_shutdown(cfg, store, tmp_path):
+    """A rescan future failed with QueueStopped means the daemon is stopping:
+    loading two models into a process on its way out is the wrong answer."""
+    from mainframe.service.mutations import QueueStopped
+
+    loads = []
+    app = Mainframe(cfg, models=_models(cfg, embedder=lambda c: loads.append("e"),
+                                        reranker=lambda c: loads.append("r")),
+                    events=EventStore(tmp_path / "ev.db"), store=store)
+    app.start_warm_up(_settled(exc=QueueStopped("mutation queue is stopping"))).join(10)
+    assert loads == [] and app.warm_up is None and app.readiness() == IDLE
+
+
+def test_a_failed_load_blocks_readiness_with_guidance(cfg, store, tmp_path):
+    """A failed load backs off; the answer is final until then and carries the
+    error and the operator's remedy. Once the backoff expires it says what will
+    actually happen — the next search retries — instead of "retry in 0s"."""
+    now = {"t": 0.0}
+
+    def boom(_c):
+        raise RuntimeError("cuda gone")
+
+    app = Mainframe(cfg, models=_models(cfg, embedder=boom, clock=lambda: now["t"]),
+                    events=EventStore(tmp_path / "ev.db"), store=store)
+    app.start_warm_up(_settled()).join(10)
+    rd = app.readiness()
+    assert rd["state"] == "blocked" and app.warm_up is None
+    assert "embedder failed: cuda gone" in rd["reason"] and "retry in 900s" in rd["reason"]
+    assert "`mainframe reload` clears the backoff" in rd["reason"]
+    now["t"] = 10_000.0
+    rd = app.readiness()
+    assert rd["state"] == "blocked" and "the next search retries" in rd["reason"] and "0s" not in rd["reason"]
+
+
+def test_a_transient_warm_up_failure_does_not_stick(cfg, store, tmp_path):
+    """The reviewer's reproduction: one load failure during the warm-up left
+    readiness false FOREVER while every later search was served, and the named
+    remedy (reload) would have dropped the serving models. Readiness is live."""
+    from v2.conftest import FakeEmbedder
+
+    now, calls = {"t": 0.0}, []
+
+    def flaky(_c):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("transient cuda blip")
+        return FakeEmbedder()
+
+    app = Mainframe(cfg, models=_models(cfg, embedder=flaky, clock=lambda: now["t"]),
+                    events=EventStore(tmp_path / "ev.db"), store=store)
+    app.start_warm_up(_settled()).join(10)
+    assert app.readiness()["state"] == "blocked"
+    now["t"] = 10_000.0                                # backoff over; a real search loads and is served
+    assert "results" in app.search("anything")
+    assert app.readiness() == READY
+
+
+def test_a_warm_up_inference_failure_is_reported_not_remembered(cfg, store, tmp_path, monkeypatch):
+    """Load failures already live in `Models.state()`. An inference failure in
+    the warm-up search is logged and emitted, and readiness then reports from
+    live state — the models ARE resident, and a search may well succeed."""
+    app = _app(cfg, store, tmp_path)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("inference boom")
+    monkeypatch.setattr(app.searcher, "search", boom)
+    app.start_warm_up(_settled()).join(10)
+    assert app.warm_up is None and app.readiness() == READY
+    last = app.events.recent(1)[0]
+    assert last["kind"] == "daemon.warm_up" and last["detail"] == {"ok": False, "error": "inference boom"}
+
+
+def test_the_warm_up_phase_clears_on_any_exit(cfg, store, tmp_path, monkeypatch):
+    """`finally`, not a happy path: a phase that survives its thread would
+    report "warming" forever."""
+    app = _app(cfg, store, tmp_path)
+
+    def bail(*_a, **_k):
+        raise SystemExit(1)                            # a BaseException; threading swallows it quietly
+    monkeypatch.setattr(app.models, "prewarm", bail)
+    app.start_warm_up(_settled()).join(10)
+    assert app.warm_up is None and app.readiness() == IDLE
+
+
+def test_readiness_reads_the_warm_up_phase_once(cfg, store, tmp_path, monkeypatch):
+    """The reviewer's reproduction: two reads of the phase per call, and a
+    concurrent reload setting it to None between them, was a TypeError —
+    a 500 from /healthz."""
+    app = _app(cfg, store, tmp_path)
+    app.models.prewarm()
+
+    class Flip:
+        reads = 0
+
+        def __get__(self, obj, owner=None):
+            Flip.reads += 1
+            return "loading models" if Flip.reads == 1 else None
+
+        def __set__(self, obj, value):
+            pass
+
+    monkeypatch.setattr(Mainframe, "warm_up", Flip(), raising=False)
+    assert app.readiness() == {"state": "warming", "reason": "loading models"}
+    assert Flip.reads == 1
+
+
+def test_a_reload_leaves_the_warm_up_its_own_phase(cfg, store, tmp_path):
+    """The warm-up owns its phase. A reload clearing it mid-flight made readiness
+    say idle while the warm-up went on loading - and then said warming again."""
+    from concurrent.futures import Future
+
+    app = _app(cfg, store, tmp_path)
+    first = Future()
+    thread = app.start_warm_up(first)
+    app.maintain("reload")
+    assert app.readiness()["state"] == "warming"
+    first.set_result(None)
+    thread.join(10)
+    assert app.warm_up is None and app.readiness() == READY
+
+
+def test_a_model_loading_for_a_search_is_warming_not_idle(cfg, store, tmp_path, monkeypatch):
+    """A load in progress will finish by itself, which is what `warming` means:
+    the one state worth waiting on."""
+    app = _app(cfg, store, tmp_path)
+    live = app.models.state()
+    live["embedder"] = dict(live["embedder"], state="loading")
+    monkeypatch.setattr(app.models, "state", lambda: live)
+    assert app.readiness() == {"state": "warming", "reason": "embedder loading"}
+
+
+def test_index_drift_blocks_readiness(cfg, store, tmp_path):
+    app = _app(cfg, store, tmp_path)
+    app.models.prewarm()
+    assert app.readiness() == READY
+    app.store.config_drift = {"chunk_size": (256, 128)}
+    rd = app.readiness()
+    assert rd["state"] == "blocked" and "mainframe rebuild" in rd["reason"]
+
+

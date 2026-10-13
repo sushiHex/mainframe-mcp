@@ -70,6 +70,34 @@ def test_initial_rescan_indexes_the_lanes(cfg, store, tmp_path):
         assert c.post("/shutdown").json() == {"stopping": False}
 
 
+def test_healthz_reports_readiness_distinct_from_liveness(cfg, store, tmp_path):
+    """`ok` says the daemon answers; `readiness` says whether a search would be
+    served by resident models. With prewarm off they differ until the first
+    search — and /healthz still never loads anything to say so."""
+    write_md(Path(cfg["paths"]["repos_dir"]) / "p" / "docs" / "a.md", "# T\n\nqwen3 reranker text.\n")
+    d = _daemon(cfg, store, tmp_path)
+    with held(d), TestClient(d.build(), base_url=BASE) as c:
+        h = c.get("/healthz").json()
+        assert h["ok"] is True and h["readiness"]["state"] == "idle"
+        d.mutations.run("drain", lambda: None, timeout=10)
+        c.post("/search", json={"query": "qwen3 reranker"})
+        assert c.get("/healthz").json()["readiness"] == {"state": "ready", "reason": None}
+        assert c.get("/status").json()["readiness"]["state"] == "ready"
+
+
+def test_prewarm_warms_up_after_the_initial_rescan(cfg, store, tmp_path):
+    cfg["service"]["prewarm"] = True
+    write_md(Path(cfg["paths"]["repos_dir"]) / "p" / "docs" / "a.md", "# T\n\nqwen3 reranker text.\n")
+    d = _daemon(cfg, store, tmp_path)
+    with held(d), TestClient(d.build(), base_url=BASE) as c:
+        deadline = time.monotonic() + 10
+        while c.get("/healthz").json()["readiness"]["state"] == "warming" and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert c.get("/healthz").json()["readiness"] == {"state": "ready", "reason": None}
+        kinds = [e["kind"] for e in c.get("/events?n=50").json()]
+        assert "daemon.warm_up" in kinds and kinds.index("daemon.warm_up") < kinds.index("index.rescan")
+
+
 def test_captured_by_is_provenance_not_caller_input(cfg, store, tmp_path):
     """`setdefault` let a REST caller's own `captured_by` survive into
     `events.emit`, which stores it verbatim and `/events` hands back — the

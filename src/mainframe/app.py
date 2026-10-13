@@ -8,13 +8,16 @@ writer by re-entering it. `capture` deliberately does not: it exclusive-creates
 an immutable file, which collides with nothing, and the watcher carries it into
 the index like any other file."""
 
+import logging
 import os
 import sys
+import threading
+from concurrent.futures import Future
 from datetime import datetime
 from pathlib import Path
 
 from mainframe import __version__ as VERSION
-from mainframe.core.models import Models
+from mainframe.core.models import ROLES, Models
 from mainframe.core.pipeline import IndexPipeline
 from mainframe.core.search import SearchService
 from mainframe.core.secrets import scrub_secrets
@@ -22,11 +25,17 @@ from mainframe.core.store import INDEX_DIRNAME, IndexStaleError, Store
 from mainframe.memory.capture import write_capture
 from mainframe.memory.lanes import Lanes, capture_id_of, safe_name
 from mainframe.service.events import EventStore
+from mainframe.service.mutations import QueueStopped
+
+logger = logging.getLogger(__name__)
 
 # `rebuild` is deliberately absent: it drops the table, so it runs OFFLINE only
 # (`cli.run_offline_rebuild`, under `.daemon.lock`), never as a daemon job while
 # readers are being served.
 JOBS = ("index", "rescan", "optimize", "reload")
+# The one search the startup warm-up runs. Any query will do: what matters is
+# that the read path has run once before the daemon calls itself ready.
+WARM_UP_QUERY = "mainframe readiness"
 
 
 def _worth_retrying(exc) -> bool:
@@ -59,6 +68,7 @@ class Mainframe:
         self.mutations = None        # attached by the daemon
         self.invalidation = None     # attached by the daemon
         self.nonce = None            # set by the daemon
+        self.warm_up = None          # the startup warm-up's PHASE while one runs; None otherwise
         self.started_at = datetime.now()
 
     @classmethod
@@ -71,6 +81,73 @@ class Mainframe:
                response_format: str = "concise") -> dict:
         return self.searcher.search(query, limit=limit, include_sessions=include_sessions,
                                     response_format=response_format)
+
+    def readiness(self) -> dict:
+        """Would a search be served by resident models right now? Observational
+        bookkeeping only — `Models.state()`, the index's drift and the warm-up's
+        current phase — so `/healthz` can carry it and still never load anything.
+
+        `state` is one of: `blocked` (a load failed, or the index drifted — an
+        operator action is named), `warming` (a warm-up or a model load is in
+        progress and will finish by itself; a caller may wait on this and on
+        nothing else), `ready` (both roles resident) or `idle` (they load on the first
+        search). It is LIVE: nothing here remembers a past verdict, so what the
+        models do next is what readiness reports next."""
+        states = self.models.state()
+        phase = self.warm_up          # ONE read: a concurrent reload may clear it between two
+        for role in ROLES:
+            st = states[role]
+            if st["state"] == "failed":
+                retry = f"retry in {st['retry_after_s']}s" if st["retry_after_s"] else "the next search retries"
+                reason = f"{role} failed: {st['error']}; {retry}; `mainframe reload` clears the backoff"
+                if st["guidance"]:
+                    reason += f" - {st['guidance']}"
+                return {"state": "blocked", "reason": reason}
+        if self.store.config_drift:
+            return {"state": "blocked",
+                    "reason": "index built under different settings; `mainframe down`, then `mainframe rebuild`"}
+        loading = [role for role in ROLES if states[role]["state"] == "loading"]
+        if phase is not None or loading:
+            return {"state": "warming", "reason": phase or f"{loading[0]} loading"}
+        for role in ROLES:
+            if states[role]["state"] != "loaded":
+                return {"state": "idle", "reason": f"{role} {states[role]['state']}; it loads on the first search"}
+        return {"state": "ready", "reason": None}
+
+    def start_warm_up(self, after) -> threading.Thread:
+        """Prewarm IS the readiness mechanism: construct both models, then run
+        ONE real search so the read path has run once — `Models.prewarm` alone
+        only constructs. Runs after `after` (what `submit("rescan",
+        wait=False)` returned: a future under the daemon, the result inline)
+        settles, on its own thread, so the writer is never blocked and the
+        search sees the reconciled index. A rescan that ended in `QueueStopped`
+        means the daemon is shutting down, and no model is loaded for that.
+
+        The warm-up is an ACTION, not a state: `self.warm_up` names its phase
+        while it runs and is None otherwise, whatever happened. Load failures
+        land in `Models.state()` as they always did; an inference failure is
+        logged and emitted, and readiness keeps reporting from live state."""
+        self.warm_up = "waiting for the initial rescan"
+
+        def _run():
+            try:
+                if isinstance(after, Future) and isinstance(after.exception(), QueueStopped):
+                    return
+                self.warm_up = "loading models"
+                self.models.prewarm()
+                self.warm_up = "running a first search"
+                self.search(WARM_UP_QUERY, limit=1)
+            except Exception as e:
+                logger.warning("warm-up failed: %s", str(e))
+                self.events.emit("daemon.warm_up", ok=False, error=str(e))
+            else:
+                self.events.emit("daemon.warm_up", ok=True)
+            finally:
+                self.warm_up = None
+
+        thread = threading.Thread(target=_run, name="warm-up", daemon=True)
+        thread.start()
+        return thread
 
     def status(self) -> dict:
         vram = None
@@ -103,6 +180,7 @@ class Mainframe:
                        "queue_depth": self.mutations.depth if self.mutations is not None else None,
                        "running": self.mutations.running if self.mutations is not None else None},
             "models": self.models.state(),
+            "readiness": self.readiness(),
             "vram": vram,
             "index": {**self.store.index_health(), "docs": docs,
                       "config_drift": self.store.config_drift,

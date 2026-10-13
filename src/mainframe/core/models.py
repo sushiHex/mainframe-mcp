@@ -156,15 +156,12 @@ class Models:
         now = self.clock()
         return {r: status.as_dict(now) for r, status in self._state.items()}
 
-    def prewarm(self, background: bool = True):
-        def _run():
-            for role in ROLES:
-                try:
-                    with self._lock:
-                        self._get(role)
-                except Exception:
-                    pass
-        if background:
-            threading.Thread(target=_run, name="prewarm", daemon=True).start()
-        else:
-            _run()
+    def prewarm(self):
+        """Construct every role that is not resident. Failures are recorded by
+        `_get` (state, backoff, guidance) and not raised: the next use reports."""
+        for role in ROLES:
+            try:
+                with self._lock:
+                    self._get(role)
+            except Exception:
+                pass
