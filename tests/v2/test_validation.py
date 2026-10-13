@@ -203,3 +203,112 @@ def test_recorded_model_failure_wins_over_a_loading_status_snapshot(tmp_path, cf
     })
     with pytest.raises(RuntimeError, match="model load failed"):
         run.indexed()
+
+
+# ---- traffic harness (issue #21) ----
+
+def _status_stub(*args, **kwargs):
+    return {"vram": None, "index": {"rows": 0}, "daemon": {"queue_depth": 0}}
+
+
+def test_parse_clients_accepts_a_sorted_unique_list_and_rejects_nonpositive():
+    from mainframe.adapters.validation import parse_clients
+    assert parse_clients("") == []
+    assert parse_clients("8, 1,4,4") == [1, 4, 8]
+    for bad in ("0", "-1", "two", "1,,2"):
+        with pytest.raises(ValueError, match="clients"):
+            parse_clients(bad)
+
+
+def test_nonfinite_or_nonpositive_load_seconds_is_rejected(tmp_path, cfg):
+    for value in (0, -1, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="load_seconds"):
+            ValidationRun(tmp_path / "output", cfg, clients=[1], load_seconds=value)
+
+
+@pytest.mark.slow
+def test_load_phases_record_per_client_metrics_and_reconnect(tmp_path, cfg):
+    run = runner(tmp_path, cfg, clients=[2, 1], load_seconds=0.5)
+    run.peer_factory = lambda client: client          # one TestClient, many threads
+    report = run.run()
+    assert report["status"] == "passed" and report["schema_version"] == 2
+    assert [p["clients"] for p in report["load"]] == [1, 2, 2]
+    assert [p["label"] for p in report["load"]] == ["warm", "warm", "reconnect"]
+    for phase in report["load"]:
+        for section in ("closed_loop", "burst"):
+            metrics = phase[section]
+            assert metrics["completed"] == metrics["requests"] > 0
+            assert metrics["overload"] == {} and metrics["timeouts"] == 0 and metrics["errors"] == []
+            assert 0 < metrics["p50_seconds"] <= metrics["p95_seconds"]
+            assert metrics["completed_per_second"] > 0
+        assert phase["burst"]["requests"] == phase["clients"] * phase["burst"]["rounds"]
+        assert phase["under_load"]["index_visibility_seconds"] > 0
+        assert phase["under_load"]["capture_visibility_seconds"] > 0
+        assert phase["health_failures"] == 0
+        assert len(phase["samples"]) >= 2 and {"rows", "queue_depth", "vram"} <= set(phase["samples"][0])
+    assert set(report["not_observed"]) == {"queue_wait", "torch_allocator"}
+    assert report["identity"]["config_sha256"] and "token" not in json.dumps(report["identity"])
+    assert report["identity"]["models"]["embedder"]["state"] == "loaded"
+
+
+def test_load_phase_preserves_overload_timeouts_and_errors_without_failing(tmp_path, cfg):
+    import httpx
+    from mainframe.adapters import validation
+
+    run = runner(tmp_path, cfg, clients=[3], load_seconds=0.1)
+    request = httpx.Request("POST", "http://localhost/search")
+
+    class Peer:
+        def __init__(self, behaviour):
+            self.behaviour = behaviour
+
+        def post(self, path, json):
+            if self.behaviour == "overload":
+                return httpx.Response(503, json={"error": "embedder unavailable"}, request=request)
+            if self.behaviour == "timeout":
+                raise httpx.ReadTimeout("slow", request=request)
+            raise OSError("connection reset")
+
+        def close(self):
+            pass
+
+    behaviours = iter(("overload", "timeout", "error"))
+    run.peer_factory = lambda client: Peer(next(behaviours))
+    run.request = _status_stub
+    run.probe_under_load = lambda: {"index_visibility_seconds": None, "capture_visibility_seconds": None}
+    run.mark = lambda *args, **kwargs: None
+    run.output.mkdir(parents=True)
+    run.load_phase("warm", 3)
+    phase = run.report["load"][0]
+    for section in ("closed_loop", "burst"):
+        metrics = phase[section]
+        assert metrics["completed"] == 0 and metrics["completed_per_second"] == 0
+        assert list(metrics["overload"]) == ["503"] and metrics["overload"]["503"] > 0
+        assert metrics["timeouts"] > 0
+        assert metrics["errors"] and all("connection reset" in e for e in metrics["errors"])
+        assert metrics["p50_seconds"] is None
+    assert phase["burst"]["requests"] == 3 * validation.BURST_ROUNDS
+
+
+def test_load_phase_fails_on_out_of_scope_or_uncited_results(tmp_path, cfg):
+    import httpx
+
+    run = runner(tmp_path, cfg, clients=[1], load_seconds=0.05)
+    request = httpx.Request("POST", "http://localhost/search")
+
+    class Peer:
+        def post(self, path, json):
+            return httpx.Response(200, json={"results": [{"file": str(tmp_path / "elsewhere.md"), "text": "x"}]},
+                                  request=request)
+
+        def close(self):
+            pass
+
+    run.peer_factory = lambda client: Peer()
+    run.request = _status_stub
+    run.probe_under_load = lambda: {}
+    run.mark = lambda *args, **kwargs: None
+    run.output.mkdir(parents=True)
+    with pytest.raises(RuntimeError, match="invalid"):
+        run.load_phase("warm", 1)
+    assert run.report["load"][0]["closed_loop"]["invalid"] > 0

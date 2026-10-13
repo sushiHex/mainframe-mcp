@@ -382,13 +382,16 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
     v.add_argument("--output", required=True, help="new directory outside Git for state, credentials, and reports")
     v.add_argument("--duration", type=float, default=0, help="observation seconds; 0 runs smoke checks and restart")
     v.add_argument("--timeout", type=float, default=2400, help="maximum seconds for an indexing/visibility check")
+    v.add_argument("--clients", default="", help="load phase client counts, e.g. 1,4,8 (default: no load phase)")
+    v.add_argument("--load-seconds", type=float, default=30, help="closed-loop seconds per client count")
     args = p.parse_args(argv)
     config = config or load_config()
 
     if args.cmd == "validate":
-        from mainframe.adapters.validation import ValidationRun
+        from mainframe.adapters.validation import ValidationRun, parse_clients
         try:
-            ValidationRun(args.output, config, args.duration, args.timeout).run()
+            ValidationRun(args.output, config, args.duration, args.timeout,
+                          clients=parse_clients(args.clients), load_seconds=args.load_seconds).run()
         except Exception as e:
             print(f"mainframe: validation failed ({e})", file=sys.stderr)
             return 1
