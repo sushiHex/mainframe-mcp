@@ -35,7 +35,7 @@ exactly `python -m pytest tests/` on a CPU-only Linux runner — if it doesn't
 pass there, it doesn't merge.
 
 The `package-install` gate also requires clean wheel installations on Windows
-and Linux with Python 3.10 and 3.14. `scripts/check_install.py` imports the runtime
+and Linux with Python 3.11 and 3.14. `scripts/check_install.py` imports the runtime
 and checks configuration and entry points outside the checkout, without pytest's
 source-path injection. Keep that check GPU-free and preserve its stable gate name
 when adjusting the matrix.
@@ -88,7 +88,7 @@ mean exactly that.
 
 ## Conventions
 
-- Python 3.10+; match the surrounding code's style, naming, and comment
+- Python 3.11+; match the surrounding code's style, naming, and comment
   density. Comments state non-obvious constraints, not narration.
 - Commit titles follow "Component: what changed" (e.g. "Capture extractor: URLs
   are not file paths") — no Conventional-Commits prefixes.

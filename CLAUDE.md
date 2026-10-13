@@ -106,7 +106,7 @@ Tests use deterministic fake models and temporary LanceDB stores; they must
 not download models or require CUDA. Real watcher timing tests use `slow` and
 run by default; exclude them only during iteration with `-m "not slow"`.
 CI's `package-install` gate separately checks built wheels on Windows/Linux
-with Python 3.10/3.14. Run `scripts/check_install.py --wheel-dir dist` against a
+with Python 3.11/3.14. Run `scripts/check_install.py --wheel-dir dist` against a
 directory containing one wheel; it installs dependencies into a fresh CPU-only
 environment and imports outside the checkout.
 

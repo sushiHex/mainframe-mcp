@@ -17,7 +17,7 @@ Your Markdown files remain the source of truth. The search index is a rebuildabl
 
 ## Quick start
 
-You need **Python 3.10+**, **Git** for installation, and an **NVIDIA GPU with BF16 support** for the default models. See [models and hardware](#models-and-hardware) for measured memory use.
+You need **Python 3.11+**, **Git** for installation, and an **NVIDIA GPU with BF16 support** for the default models. See [models and hardware](#models-and-hardware) for measured memory use.
 
 ### 1. Install
 

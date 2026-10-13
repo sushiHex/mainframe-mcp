@@ -57,8 +57,8 @@ mainframe --help
 
 Choose the appropriate CUDA build using the official [PyTorch installation
 selector](https://pytorch.org/get-started/locally/). The CPU-only CI installation
-checks do not establish GPU support. Python 3.10 and 3.14 are tested on Windows
-and Linux; the declared minimum is 3.10. Hardware presets live in the source
+checks do not establish GPU support. Python 3.11 and 3.14 are tested on Windows
+and Linux; the declared minimum is 3.11. Hardware presets live in the source
 checkout; installed packages also accept an explicit JSON configuration.
 Models download on first use unless already cached. Coordinate VRAM capacity
 before loading them and check [Windows startup memory](V2.md#startup-memory-diagnostics).

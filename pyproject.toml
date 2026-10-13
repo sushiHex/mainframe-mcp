@@ -7,7 +7,7 @@ name = "mainframe-mcp"
 dynamic = ["version"]
 description = "GPU-accelerated semantic knowledge base MCP server for Claude Code and other MCP agents. Local embedding, reranking, contradiction detection, and consolidation on a single GPU."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [{name = "sushiHex"}]
 dependencies = [
