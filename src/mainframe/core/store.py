@@ -497,7 +497,7 @@ class Store:
 
     def search(self, query_embedding, top_k: int = 20, include_captures: bool = False,
                query_text: str = "") -> list:
-        """Hybrid vector + FTS candidates, tier-boosted, stably ordered."""
+        """Vector candidates with a keyword backstop, tier-boosted, stably ordered."""
         import pandas as pd
 
         if {EMBEDDER_FIELD, ENCODING_FIELD}.intersection(self.config_drift):
@@ -545,25 +545,23 @@ class Store:
                                        f"to do it now: {e2}")
                     self.fts_error = str(e2)
 
-        # THE POOL IS VECTOR-SELECTED AND KEYWORD-BACKSTOPPED.
+        # THE POOL IS VECTOR-SELECTED AND KEYWORD-BACKSTOPPED, BY MEASUREMENT.
         #
         # Keyword hits are ranked below EVERY vector hit, so they fill only the
         # room the vector branch leaves - and on a corpus large enough for that
-        # branch to return a full pool, the room is none. `search` is therefore
-        # semantic with a keyword backstop, NOT a hybrid merge, whatever the
-        # word "hybrid" suggests elsewhere. The two tests below pin both halves
-        # of that sentence so the contract is stated rather than inferred.
+        # branch to return a full pool, the room is none. `search` is semantic
+        # with a keyword backstop, not a hybrid merge. The two tests named
+        # `test_keyword_hits_*` pin both halves of that sentence.
         #
-        # Whether admitting keyword candidates would help is OPEN. It was tried
-        # (issue #40) and the A/B was invalid: the live index gains documents
-        # while the daemon serves, so the before and after ran against different
-        # corpora. Measuring it needs a frozen index - copy the store and score
-        # it in-process with `--db` - not another run against the daemon.
-        #
-        # What IS established there: of the queries where keyword search finds
-        # the expected file and the answer does not, every one was already in
-        # the vector pool. The reranker had them and placed them outside the
-        # top 3, so pool composition is not obviously the lever it looks like.
+        # Admitting keyword-only candidates was measured on a frozen index
+        # (issue #40: 49 queries, one corpus for every arm, baseline reproduced
+        # to the last digit). Admitting all of them cost 0.019 composite;
+        # reserving three of twenty slots cost 0.015. They rescue an occasional
+        # answer, but BM25 matches on rare tokens are lexical decoys that the
+        # cross-encoder ranks above the right passage more often. Revisit only
+        # with queries written for identifiers that ONLY keyword search can
+        # find - this set was authored against a vector-only pool and cannot
+        # contain one.
         if not fts.empty and not vec.empty:
             new = fts[~fts["chunk_key"].isin(set(vec["chunk_key"]))]
             if not new.empty:
@@ -606,7 +604,7 @@ class Store:
 
     @property
     def keyword_search(self) -> dict:
-        """Whether the keyword half of hybrid search is answering.
+        """Whether the keyword backstop is answering.
 
         `ok` is OBSERVATIONAL: it means no FTS query has failed since the last
         repair, not that one has been verified to work. Verification is not
