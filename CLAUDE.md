@@ -69,7 +69,11 @@ model caches outside public Git.
   error 1455 is host commit exhaustion; preserve its diagnostics and backoff,
   and never classify it as a CUDA-context fault that needs a model reload.
 - Health readers use metadata without importing or loading models. Keep
-  blocking work off the HTTP event loop.
+  blocking work off the HTTP event loop. `/healthz` `ok` is liveness;
+  `Mainframe.readiness()` is the one place readiness is computed, LIVE, from
+  the same bookkeeping (model state, index drift, the warm-up's current phase):
+  `ready` | `idle` | `warming` | `blocked`. The warm-up is an action, never a
+  remembered verdict; `mainframe up` waits only while `warming`.
 - Watcher callbacks filter paths cheaply and record invalidations. Lane
   discovery handles scope and containment; rescans recover missed events.
   Index-generated activity must not trigger rescans.

@@ -33,10 +33,11 @@ async def _body(request: Request):
 
 def routes(app, shutdown) -> list:
     async def healthz(_: Request):
-        # Never touches the models: `state()` reads the registry's bookkeeping,
-        # it does not load anything.
+        # Never touches the models: `state()` and `readiness()` read the
+        # registry's bookkeeping, they do not load anything. `ok` is liveness
+        # (this process answers); `readiness` is the separate question.
         return JSONResponse({"ok": True, "pid": os.getpid(), "version": __version__, "nonce": app.nonce,
-                             "models": app.models.state(),
+                             "models": app.models.state(), "readiness": app.readiness(),
                              "queue_depth": app.mutations.depth if app.mutations else None})
 
     async def status(_: Request):

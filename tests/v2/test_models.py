@@ -285,7 +285,7 @@ def test_invalidate_frees_the_cuda_cache_when_torch_is_already_imported(cfg, mon
     monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(
         cuda=SimpleNamespace(is_available=lambda: True, empty_cache=lambda: calls.append("empty_cache"))))
     m = fake_models(cfg)
-    m.prewarm(background=False)
+    m.prewarm()
     assert m.loaded("embedder") and m.loaded("reranker")
     m.invalidate("embedder")
     assert calls == ["empty_cache"]
@@ -293,7 +293,7 @@ def test_invalidate_frees_the_cuda_cache_when_torch_is_already_imported(cfg, mon
     assert m.loaded("reranker"), "invalidation is per ROLE: a bad embedder says nothing about the reranker"
 
     monkeypatch.delitem(sys.modules, "torch")
-    m.prewarm(background=False)
+    m.prewarm()
     m.invalidate("embedder")                    # no torch imported: still fine, still no import
     assert "torch" not in sys.modules and not m.loaded("embedder")
 
@@ -307,7 +307,7 @@ def test_invalidate_survives_a_broken_cuda_runtime(cfg, monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(
         cuda=SimpleNamespace(is_available=lambda: True, empty_cache=boom)))
     m = fake_models(cfg)
-    m.prewarm(background=False)
+    m.prewarm()
     m.invalidate("embedder")                    # best-effort: a dead runtime must not block the reload
     assert not m.loaded("embedder") and m.state()["embedder"]["state"] == "absent"
 
@@ -327,7 +327,7 @@ def test_reload_releases_all_models_before_one_cache_clear(cfg, monkeypatch):
     monkeypatch.setattr("mainframe.core.models.empty_cuda_cache",
                         lambda: cache_liveness.append([ref() is not None for ref in refs]))
     m = Models(cfg, embedder_factory=load, reranker_factory=load)
-    m.prewarm(background=False)
+    m.prewarm()
     assert m.invalidate_all() == ["embedder", "reranker"]
     assert cache_liveness == [[False, False]]
     assert m.invalidate_all() == []
@@ -352,7 +352,7 @@ def test_health_snapshots_stay_readable_through_loading_failure_and_release(cfg)
         raise RuntimeError("synthetic load failure")
 
     m = Models(cfg, embedder_factory=load_embedder, reranker_factory=load_reranker, clock=lambda: 0)
-    worker = threading.Thread(target=lambda: m.prewarm(background=False), daemon=True)
+    worker = threading.Thread(target=lambda: m.prewarm(), daemon=True)
     worker.start()
     try:
         assert entered.wait(5)

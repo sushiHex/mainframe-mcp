@@ -1,5 +1,6 @@
 import builtins
 import json
+import subprocess
 import urllib.parse
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -160,8 +161,123 @@ def _never_spawn(config):
 
 
 def _health(state, nonce="n"):
-    """A daemon that answers /healthz only while `state['up']` is true."""
-    return {("GET", "/healthz"): lambda _: {"ok": state["up"], "nonce": nonce}}
+    """A daemon that answers /healthz only while `state['up']` is true, and
+    reports `state['readiness']` (the next one, when it is a list)."""
+    def body(_):
+        rd = state.get("readiness")
+        if isinstance(rd, list):
+            rd = rd.pop(0) if len(rd) > 1 else rd[0]
+        return {"ok": state["up"], "nonce": nonce, "readiness": rd}
+    return {("GET", "/healthz"): body}
+
+
+_WARMING = {"state": "warming", "reason": "loading models"}
+_READY = {"state": "ready", "reason": None}
+_IDLE = {"state": "idle", "reason": "embedder absent; it loads on the first search"}
+_BLOCKED = {"state": "blocked",
+            "reason": "embedder failed: cuda gone; retry in 900s; `mainframe reload` clears the backoff"}
+
+
+def test_up_waits_while_the_daemon_is_warming(cfg, monkeypatch):
+    """A warming daemon becomes ready on its own, so `up` returning means
+    ready - not merely answering. No config is consulted: the daemon says."""
+    monkeypatch.setattr(cli, "START_POLL_SECONDS", 0.0)
+    write_discovery(cfg, 1234, "n")
+    state = {"up": False, "readiness": [_WARMING] * 4 + [_READY]}
+
+    def runner(argv):
+        state["up"] = True
+        return 0
+
+    http = FakeHTTP(_health(state))
+    assert cli.main(["up"], config=cfg, http=http, runner=runner, spawn=_never_spawn) == 0
+    assert state["readiness"] == [_READY]           # it polled through every warming answer
+    assert len(http.calls) == 5
+
+
+def test_up_returns_on_an_idle_daemon_and_names_the_key(cfg, capsys):
+    """Idle means nothing will load until a search, so waiting would wait
+    forever. Say what is true and where the other behaviour lives."""
+    write_discovery(cfg, 1234, "n")
+    state = {"up": False, "readiness": _IDLE}
+
+    def runner(argv):
+        state["up"] = True
+        return 0
+
+    assert cli.main(["up"], config=cfg, http=FakeHTTP(_health(state)), runner=runner, spawn=_never_spawn) == 0
+    err = capsys.readouterr().err
+    assert "service.prewarm: true" in err and "first search" in err and err.isascii(), err
+
+
+def test_up_reports_a_blocked_daemon_at_once(cfg, capsys):
+    """A failed load backs off for minutes; polling a 120 s timeout against it
+    would report a timeout instead of the failure. Blocked is final: reported
+    at once, with the remedy - whether or not prewarm is on."""
+    write_discovery(cfg, 1234, "n")
+    state = {"up": True, "readiness": _BLOCKED}
+    http = FakeHTTP(_health(state))
+    assert cli.main(["up", "--timeout", "1000"], config=cfg, http=http, runner=_no_schtasks,
+                    spawn=_never_spawn) == 1
+    assert len(http.calls) <= 3
+    err = capsys.readouterr().err
+    assert "blocked" in err and "cuda gone" in err and "mainframe reload" in err and err.isascii(), err
+
+
+def test_up_already_running_still_waits_for_readiness(cfg, capsys, monkeypatch):
+    """A daemon mid-warm-up answers already; `up` must not say "already
+    running" and return 0 while it is not yet ready."""
+    monkeypatch.setattr(cli, "START_POLL_SECONDS", 0.0)
+    write_discovery(cfg, 1234, "n")
+    state = {"up": True, "readiness": [_WARMING, _READY]}
+    http = FakeHTTP(_health(state))
+    assert cli.main(["up"], config=cfg, http=http, runner=_no_schtasks, spawn=_never_spawn) == 0
+    assert "already running" in capsys.readouterr().out
+    assert state["readiness"] == [_READY]
+
+
+def test_up_names_the_phase_at_timeout(cfg, capsys):
+    write_discovery(cfg, 1234, "n")
+    state = {"up": True, "readiness": _WARMING}
+    assert cli.main(["up", "--timeout", "0"], config=cfg, http=FakeHTTP(_health(state)),
+                    runner=_no_schtasks, spawn=_never_spawn) == 1
+    err = capsys.readouterr().err
+    assert "still warming" in err and "loading models" in err and err.isascii(), err
+
+
+def test_up_accepts_a_daemon_that_does_not_report_readiness(cfg, capsys):
+    """A daemon from before this field (mid-upgrade) answers without it; that
+    is the old contract, and the old contract is 0."""
+    write_discovery(cfg, 1234, "n")
+    state = {"up": True}
+    assert cli.main(["up"], config=cfg, http=FakeHTTP(_health(state)), runner=_no_schtasks,
+                    spawn=_never_spawn) == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_only_the_start_probe_is_quiet(cfg, capsys, monkeypatch):
+    """`schtasks /Run` is a probe: on a machine with no logon task its own
+    'cannot find the file' landed on the terminal right above our explanation.
+    `install-task` is the user's own command, and schtasks' output IS its
+    report - that one stays loud."""
+    seen = {"run": [], "call": []}
+    write_discovery(cfg, 1234, "n")
+    state = {"up": False, "readiness": _READY}
+
+    def fake_run(argv, **kw):
+        seen["run"].append((argv, kw))
+        state["up"] = True
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(cli.subprocess, "call", lambda argv, **kw: seen["call"].append(argv) or 0)
+    assert cli.main(["up"], config=cfg, http=FakeHTTP(_health(state)), spawn=_never_spawn) == 0
+    [(argv, kw)] = seen["run"]
+    assert argv[:2] == ["schtasks", "/Run"]
+    assert kw["stdout"] == cli.subprocess.DEVNULL and kw["stderr"] == cli.subprocess.DEVNULL
+    assert cli.main(["install-task"], config=cfg) == 0
+    assert [a[:2] for a in seen["call"]] == [["schtasks", "/Create"]] and len(seen["run"]) == 1
+    assert capsys.readouterr().err == ""
 
 
 def test_up_falls_back_to_a_detached_serve_when_no_task_answers(cfg, capsys):
