@@ -82,7 +82,7 @@ def prepare_document(lf: LaneFile, chunk_cfg: dict, embed, known_hash: str | Non
         text = scrub_secrets(text)
     # Frontmatter (`---\nkey: value\n...\n---`) is metadata, not content, but
     # stripping it before chunking is a retrieval-affecting change that must be
-    # measured against v1 eval parity before it ships — opt in via
+    # measured against the eval baseline before it ships — opt in via
     # chunker.strip_frontmatter (default False keeps this byte-identical to
     # chunking `text` outright). When on, `split` is a no-op ({}, text
     # unchanged) for files with no fence, and chunk offsets are shifted back to

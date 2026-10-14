@@ -8,13 +8,14 @@ repository is the development home. Read `AGENTS.md`, `CONTRIBUTING.md`, and
 
 ## Versions and structure
 
-- `src/mainframe_mcp/`: legacy v1 stdio server, including consolidation, NLI
-  contradiction checks, and optional RAPTOR summaries.
-- `src/mainframe/`: default v2 daemon with capture, indexing, search, HTTP MCP,
-  REST, CLI, and a stdio forwarding adapter. See `docs/V2.md`.
-- v1 owns `.lancedb`; v2 owns `index.lancedb`. Never point either implementation
-  at the other's index. v2 builds a new index on first startup.
-- v2 consolidation is not implemented. Its capture/receipt primitives do not
+- `src/mainframe/`: the v2 daemon with capture, indexing, search, HTTP MCP,
+  REST, CLI, and a stdio forwarding adapter. See `docs/V2.md`. The v1 stdio
+  server (`src/mainframe_mcp/`, with consolidation, NLI contradiction checks,
+  and RAPTOR summaries) was removed after 2.0.0a2; the `v2.0.0a1` artifact is
+  the last build that shipped it.
+- v2 owns `<mainframe_dir>/index.lancedb` and builds it on first startup. A
+  `.lancedb` left in the same directory by v1 is never opened or converted.
+- Consolidation is not implemented. The capture/receipt primitives do not
   imply a complete ambient consolidation loop.
 - Harrier 0.6B native BF16 is the v2 default, paired with Qwen3 Reranker
   0.6B in BF16 at revision `e61197ed45024b0ed8a2d74b80b4d909f1255473`.
@@ -24,8 +25,7 @@ repository is the development home. Read `AGENTS.md`, `CONTRIBUTING.md`, and
   `mainframe-mcp` forwards stdio to the daemon; it does not start another stack.
 - Changed or missing native index identity blocks reads and writes. Rebuild
   offline instead of editing the fingerprint. Do not silently reuse Qwen vectors
-  or add rollback requirements for retired default models. Legacy v1 remains
-  an explicit implementation and refuses native configurations.
+  or add rollback requirements for retired default models.
   See `docs/V2.md#native-embedding-contract`.
 
 
@@ -82,7 +82,7 @@ model caches outside public Git.
 - Citation lines require a matching file hash and a verified passage.
   Ambiguous matches must never receive guessed source spans.
 - Preserve the selected native reranker prompt tokens, query/context bounds,
-  and saved-order batches of eight. The shared `mainframe_mcp.qwen` helper
+  and saved-order batches of eight. The `mainframe.core.qwen` helper
   budgets documents in tokens and reserves the scoring suffix; character counts
   are not context budgets. One-shot reranking projects only the final token and
   disables the unused decoder cache. Its relative yes/no score orders passages;
@@ -97,8 +97,8 @@ model caches outside public Git.
 
 ## Validation and publication
 
-The preview distribution is `2.0.0a2`; `mainframe_mcp.__version__` supplies both
-runtime namespaces and build metadata. Keep them consistent. Follow
+The preview distribution is `2.0.0a2`; `mainframe.__version__` supplies the
+build metadata. Follow
 `docs/PREVIEW_RELEASE.md` for release artifacts, migration, and rollback;
 release preparation produces an audited draft prerelease, not a default switch.
 
@@ -112,8 +112,7 @@ environment and imports outside the checkout.
 
 `python -u eval/evaluate.py --daemon` scores v2 without loading another model
 set. Default v2 evaluation also uses a running daemon; offline evaluation
-uses the configured state directory. `eval/evaluate_v1.py` retains the v1
-harness. See `eval/README.md`.
+uses the configured state directory. See `eval/README.md`.
 
 Before live GPU work, follow `eval/README.md#shared-desktop-gpu-runs`.
 Protect desktop responsiveness with measured telemetry and paced work; reserve

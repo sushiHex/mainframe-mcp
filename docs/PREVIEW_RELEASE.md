@@ -17,7 +17,10 @@ remains available for reference and rollback.
 
 ## Capabilities
 
-| Capability | v1 server | v2 preview |
+The v1 column describes the `v2.0.0a1` artifact; the v1 server has since been
+[removed from the source](#v1-removal).
+
+| Capability | v1 server (`v2.0.0a1`) | v2 preview |
 |---|---|---|
 | Semantic search (keyword backstop) and native reranking | Yes | Yes |
 | Immutable captures, indexing, search | Yes | Yes |
@@ -86,15 +89,23 @@ Exercise real questions and capture recall through separate MCP sessions before
 expanding scope. Continue observing ordinary work over time; synthetic checks
 and a bounded trial do not establish retrieval quality or long-term stability.
 
-## Legacy v1 operation
+## v1 removal
 
-Legacy v1 is an explicit choice, not the default or a required rollback.
-If using it, run `mainframe down` and confirm it has stopped. Restore
-the original v1 environment, configuration, and MCP registration
-(`python -u -m mainframe_mcp.server`). Its separate index remains available.
-Keep v2 captures and source notes: rollback does not import them into v1 or undo
-changes made to authoritative files. Preserve the preview directory for diagnosis;
-do not delete or repoint either index as part of rollback.
+The v1 stdio server (`src/mainframe_mcp/`, `python -u -m mainframe_mcp.server`)
+was removed from the source after 2.0.0a2. It is not a rollback target: the
+`v2.0.0a1` artifact is the last build that shipped it, and its index was
+never shared with v2. If one is still on disk:
+
+- `<mainframe_dir>/.lancedb` (v1's index) and `.manifest.json` are never read
+  by v2 and can be deleted. v2 keeps `index.lancedb`.
+- `research/sessions/` (v1's raw capture lane) stays excluded from the
+  knowledge lane; v2 captures live under `<mainframe_dir>/captures/`.
+- Configuration keys only v1 read are refused at startup like any other
+  unknown key, and the error names the key. Delete these from `config.json`
+  if present: `reranker.top_k`, `chunker.min_section_tokens`,
+  `search.fetch_multiplier`, `tiers.archive`, `memory.consolidate_threshold`.
+- `MAINFRAME_READ_ONLY` and `MAINFRAME_PREWARM` were v1 variables; v2 uses
+  the `/mcp/ro` endpoint and `service.prewarm`.
 
 ## Maintainer release checks
 

@@ -1,23 +1,29 @@
-"""The kept chunker must produce byte-identical chunks to v1 — the retrieval
-baseline depends on it. Runs over this repo's own markdown (no GPU)."""
+"""The chunker must produce byte-identical chunks to the ones the retrieval
+baseline was measured under.
+
+`fixtures/chunker_baseline.json` was generated from the original chunker (the
+retired `mainframe_mcp.chunker`, whose output `mainframe.core.chunker` had
+matched byte-for-byte on every repo document) at the moment that package was
+removed. It pins what the eval composite score and the index fingerprint were
+measured against: a change that moves any field here moves the baseline and
+needs its own evaluation and an offline rebuild, not a regenerated golden."""
+import json
 from pathlib import Path
 
-from mainframe.core.chunker import chunk_markdown as v2
-from mainframe_mcp.chunker import chunk_markdown as v1
+from mainframe.core.chunker import chunk_markdown
 
-ROOT = Path(__file__).resolve().parents[2]
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
-def test_chunks_identical_on_repo_docs():
-    files = sorted(list((ROOT / "docs").rglob("*.md")) + [ROOT / "CLAUDE.md", ROOT / "README.md"])
-    assert files, "no docs found"
-    total = 0
-    for f in files:
-        text = f.read_text(encoding="utf-8")
-        a = [(c.text, c.heading, c.chunk_index, c.char_start, c.char_end, c.token_count) for c in v1(text, 256, 0.35)]
-        b = [(c.text, c.heading, c.chunk_index, c.char_start, c.char_end, c.token_count) for c in v2(text, 256, 0.35)]
-        assert a == b, f"chunker drift in {f}"
-        total += len(a)
-    # Documentation size varies between checkouts; parity requires nonempty
-    # coverage, not the size of a particular corpus.
-    assert total > 0
+def test_chunks_match_the_measured_baseline():
+    text = (FIXTURES / "chunker_baseline.md").read_text(encoding="utf-8")
+    expected = json.loads((FIXTURES / "chunker_baseline.json").read_text(encoding="utf-8"))
+    actual = [{"chunk_index": c.chunk_index, "heading": c.heading, "char_start": c.char_start,
+               "char_end": c.char_end, "token_count": c.token_count, "text": c.text}
+              for c in chunk_markdown(text, 256, 0.35)]
+    assert actual == expected, "chunker drift from the measured baseline"
+    # The fixture must keep exercising overlap (one section spanning several
+    # chunks) and tiny-section merging, or the golden proves less than it claims.
+    headings = [c["heading"] for c in actual]
+    assert headings.count("A long section") > 1
+    assert "Tiny section" not in headings

@@ -1,16 +1,23 @@
 """Embedder VRAM resilience: OOM at a batch retries at batch_size=1."""
 
 import numpy as np
+import pytest
 import torch
 
-from mainframe_mcp.embedder import Embedder
+from mainframe.core.embedder import Embedder
+
+
+def _legacy_embedder(batch_size):
+    emb = Embedder.__new__(Embedder)  # bypass model loading
+    emb._use_manual = False
+    emb.encoding = None  # legacy Sentence Transformers path: model.encode
+    emb.batch_size = batch_size
+    emb._safe_batch = 64  # grid cap (irrelevant here; > batch_size)
+    return emb
 
 
 def test_embed_retries_at_batch_one_on_oom():
-    emb = Embedder.__new__(Embedder)  # bypass model loading
-    emb._use_manual = False
-    emb.batch_size = 8
-    emb._safe_batch = 64  # grid cap (irrelevant here; > batch_size)
+    emb = _legacy_embedder(batch_size=8)
     calls = []
 
     class FakeModel:
@@ -27,18 +34,12 @@ def test_embed_retries_at_batch_one_on_oom():
 
 
 def test_embed_reraises_oom_at_batch_one():
-    emb = Embedder.__new__(Embedder)
-    emb._use_manual = False
-    emb.batch_size = 1
-    emb._safe_batch = 64
+    emb = _legacy_embedder(batch_size=1)
 
     class AlwaysOOM:
         def encode(self, texts, batch_size, show_progress_bar=False, normalize_embeddings=True):
             raise torch.cuda.OutOfMemoryError("CUDA out of memory")
 
     emb.model = AlwaysOOM()
-    try:
+    with pytest.raises(torch.cuda.OutOfMemoryError):
         emb.embed(["a"])
-        assert False, "expected OOM to propagate when already at batch_size=1"
-    except torch.cuda.OutOfMemoryError:
-        pass

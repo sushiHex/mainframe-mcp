@@ -100,10 +100,9 @@ mean exactly that.
 
 | Path | What it is |
 |------|-----------|
-| `src/mainframe_mcp/` | The server — one module per concern (see `CLAUDE.md` for the map) |
-| `src/mainframe/` | v2 preview: indexing/search core, memory lanes, daemon service, CLI/MCP adapters |
-| `tests/` | GPU-free suite; `conftest.py` has the fake-embedder harness |
-| `tests/v2/` | v2 regressions, real temporary stores, watcher and transport coverage |
+| `src/mainframe/` | The daemon: indexing/search core, memory lanes, daemon service, CLI/MCP adapters (see `CLAUDE.md` for the map) |
+| `tests/` | GPU-free suite; `tests/v2/conftest.py` has the fake-model harness |
+| `tests/v2/` | Daemon regressions, real temporary stores, watcher and transport coverage |
 | `eval/` | The measurement harness + experiment-log template |
 | `configs/` | VRAM-tier presets |
 

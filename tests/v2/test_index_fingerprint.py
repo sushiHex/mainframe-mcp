@@ -6,8 +6,8 @@ any of them leaves every existing row untouched while new documents enter a
 different regime, and nothing about a row itself records which regime made it.
 
 There is no ownership half any more: v2 keeps its rows in
-`<mainframe_dir>/index.lancedb`, v1 keeps `.lancedb`, so no directory is ever
-claimed by two builds.
+`<mainframe_dir>/index.lancedb`, and a `.lancedb` left on disk by the retired
+v1 server is never opened, so no directory is ever claimed by two builds.
 """
 import json
 

@@ -1,14 +1,14 @@
 """Loader contracts for the selected native Qwen NF4/BF16 reranker."""
 
-import importlib
 import sys
 from types import SimpleNamespace
 
 import pytest
 import torch
 
+from mainframe.core import reranker as module
 
-MODULES = ("mainframe_mcp.reranker", "mainframe.core.reranker")
+
 REVISION = "22e683669bc0f0bd69640a1354a6d0aebcfeede5"
 
 
@@ -49,15 +49,13 @@ def install_fake_transformers(monkeypatch, *, loaded_in_4bit, calls=None):
     return calls
 
 
-@pytest.mark.parametrize("module_name", MODULES)
 @pytest.mark.parametrize("device,quantize,loaded_in_4bit,precision", [
     ("cuda", True, True, "nf4-bf16"),
     ("cuda", False, False, "bf16"),
     ("cpu", True, False, "bf16"),
 ])
 def test_qwen_loader_uses_pinned_nf4_or_bf16(
-        monkeypatch, module_name, device, quantize, loaded_in_4bit, precision):
-    module = importlib.import_module(module_name)
+        monkeypatch, device, quantize, loaded_in_4bit, precision):
     calls = install_fake_transformers(monkeypatch, loaded_in_4bit=loaded_in_4bit)
     reranker = module.Reranker.__new__(module.Reranker)
     reranker.model_name, reranker.revision, reranker.quantize = "Qwen/test", REVISION, quantize
@@ -81,9 +79,7 @@ def test_qwen_loader_uses_pinned_nf4_or_bf16(
         assert kwargs["device_map"] == device and "quantization_config" not in kwargs
 
 
-@pytest.mark.parametrize("module_name", MODULES)
-def test_qwen_cuda_nf4_load_requires_actual_4bit_model(monkeypatch, module_name):
-    module = importlib.import_module(module_name)
+def test_qwen_cuda_nf4_load_requires_actual_4bit_model(monkeypatch):
     install_fake_transformers(monkeypatch, loaded_in_4bit=False)
     reranker = module.Reranker.__new__(module.Reranker)
     reranker.model_name, reranker.revision, reranker.quantize = "Qwen/test", REVISION, True
@@ -93,9 +89,7 @@ def test_qwen_cuda_nf4_load_requires_actual_4bit_model(monkeypatch, module_name)
         reranker._load_qwen3("cuda")
 
 
-@pytest.mark.parametrize("module_name", MODULES)
-def test_cross_encoder_receives_requested_revision(monkeypatch, module_name):
-    module = importlib.import_module(module_name)
+def test_cross_encoder_receives_requested_revision(monkeypatch):
     calls = {}
 
     class CrossEncoder:

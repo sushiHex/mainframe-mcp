@@ -1,6 +1,5 @@
-"""Exercise both production scoring paths with a local, deterministic tokenizer."""
+"""Exercise the native Qwen scoring path with a local, deterministic tokenizer."""
 
-import importlib
 from types import SimpleNamespace
 
 import pytest
@@ -8,7 +7,8 @@ import torch
 from tokenizers import Tokenizer, models, pre_tokenizers
 from transformers import PreTrainedTokenizerFast
 
-from mainframe_mcp.qwen import tokenize_with_suffix
+from mainframe.core import reranker as module
+from mainframe.core.qwen import tokenize_with_suffix
 
 
 class RecordingByteTokenizer:
@@ -57,9 +57,8 @@ def test_vocab_width_is_cached_on_the_resident_tokenizer():
     assert tokenizer.get_vocab_calls == 1
 
 
-@pytest.fixture(params=["mainframe_mcp.reranker", "mainframe.core.reranker"])
-def scorer(request):
-    module = importlib.import_module(request.param)
+@pytest.fixture
+def scorer():
     vocabulary = ["[UNK]", "[PAD]", "<|im_start|>", "<|im_end|>",
                   "ANSWER", "routine", "context", "query", "document"]
     backend = Tokenizer(models.WordLevel(dict(zip(vocabulary, range(len(vocabulary)))),
@@ -87,14 +86,14 @@ def scorer(request):
             return SimpleNamespace(logits=logits)
 
     r.model = Model()
-    return module, r, seen
+    return r, seen
 
 
 @pytest.mark.parametrize("fenced", [False, True], ids=["paragraph", "code-block"])
 def test_evidence_beyond_old_character_limit_reaches_model(scorer, fenced):
     from mainframe.core.chunker import chunk_markdown
 
-    module, r, seen = scorer
+    r, seen = scorer
     paragraph = "routine context " * 260 + "ANSWER closes the ticket.\n"
     source = "# Handbook\n\n" + (f"```text\n{paragraph}```\n" if fenced else paragraph)
     chunk = next(c for c in chunk_markdown(source) if "ANSWER" in c.text)
@@ -109,7 +108,7 @@ def test_evidence_beyond_old_character_limit_reaches_model(scorer, fenced):
 
 
 def test_token_overflow_preserves_suffix_context_bound_and_left_padding(scorer):
-    module, r, seen = scorer
+    r, seen = scorer
     r._score_qwen3("query", ["document", "routine context " * 3000])
     batch = seen[0]
     assert batch["input_ids"].shape == (2, module._QWEN3_MAX_LENGTH)
@@ -122,7 +121,7 @@ def test_token_overflow_preserves_suffix_context_bound_and_left_padding(scorer):
 
 
 def test_ordinary_prompt_tokens_and_fixed_batch_order_are_unchanged(scorer):
-    module, r, seen = scorer
+    r, seen = scorer
     docs = ["routine " * i for i in range(1, 12)]
     r._score_qwen3("query", docs)
     assert [len(batch["input_ids"]) for batch in seen] == [8, 3]

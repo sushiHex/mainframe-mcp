@@ -20,7 +20,7 @@ import warnings
 import torch
 from sentence_transformers import CrossEncoder
 
-from mainframe_mcp.qwen import (
+from mainframe.core.qwen import (
     _QWEN3_QUERY_CHAR_CLAMP,
     qwen3_pair_text,
     tokenize_with_suffix,

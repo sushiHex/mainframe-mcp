@@ -1,5 +1,4 @@
 import json
-import logging
 from pathlib import Path
 
 import pytest
@@ -208,25 +207,36 @@ def test_an_unknown_config_key_is_refused_by_name(tmp_path):
     assert "vector_index_rows" not in DEFAULTS["index"]
 
 
-def test_v1_era_keys_and_comments_are_tolerated(tmp_path, caplog):
-    """v1 is still installed and reads the SAME config file and presets, so
-    keys only IT owns are not typos. Refusing them would brick the daemon on
-    every machine that has both — but an exemption that passes in SILENCE is,
-    from the operator's chair, indistinguishable from a setting in force."""
-    shared = tmp_path / "shared.json"
-    shared.write_text(json.dumps({
-        "_note": "a comment", "reranker": {"top_k": 3}, "search": {"fetch_multiplier": 2},
-        "chunker": {"min_section_tokens": 10}, "tiers": {"archive": 1.1},
-        "memory": {"consolidate_threshold": 5}, "service": {"port": 8123},
-    }), encoding="utf-8")
-    with caplog.at_level(logging.INFO, logger="mainframe.config"):
-        assert load_config(shared)["service"]["port"] == 8123
-    said = "\n".join(caplog.messages)
-    for key in ("reranker.top_k", "search.fetch_multiplier", "chunker.min_section_tokens",
-                "tiers.archive", "memory.consolidate_threshold"):
-        assert key in said and "does not read it" in said
-    for name in ("cpu-only", "gpu-light", "gpu-max", "gpu-minimal"):
-        assert load_preset(name)["service"]["port"] == 7433
+@pytest.mark.parametrize("section,key", [
+    ("reranker", "top_k"), ("search", "fetch_multiplier"), ("chunker", "min_section_tokens"),
+    ("tiers", "archive"), ("memory", "consolidate_threshold"),
+])
+def test_retired_v1_keys_are_refused_like_any_other_unknown_key(tmp_path, section, key):
+    """The retired stdio server read the same config file and owned these
+    keys, so they were exempted while both builds shared it. Nothing reads
+    them now; an exemption that outlived its reader would let a dead setting
+    pass as one in force. The refusal names the key so the fix is one line."""
+    stale = tmp_path / "stale.json"
+    stale.write_text(json.dumps({"_note": "a comment", section: {key: 3}}), encoding="utf-8")
+    with pytest.raises(ConfigError, match=f"{section}.{key}"):
+        load_config(stale)
+
+
+def test_comments_are_tolerated_and_every_shipped_preset_passes_the_unknown_key_rule(tmp_path):
+    commented = tmp_path / "commented.json"
+    commented.write_text(json.dumps({"_note": "a comment", "service": {"port": 8123}}),
+                         encoding="utf-8")
+    assert load_config(commented)["service"]["port"] == 8123
+    # Presets merge without the check (repo-shipped, not hand-typed), so hold
+    # them to it here: a dead key in a preset is the silent setting the
+    # refusal exists to prevent.
+    from mainframe.config import PRESETS_DIR, _deep_merge
+    presets = sorted(PRESETS_DIR.glob("*.json"))
+    assert presets
+    for path in presets:
+        _deep_merge(deep_copy(DEFAULTS), json.loads(path.read_text(encoding="utf-8")),
+                    source=path.name)
+        assert load_preset(path.stem)["service"]["port"] == 7433
 
 
 def test_deep_copy_is_independent():

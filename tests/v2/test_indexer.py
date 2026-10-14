@@ -110,7 +110,7 @@ def test_raising_contextualizer_degrades_to_plain_chunks(tmp_path, fake_embedder
 
 
 def test_frontmatter_kept_by_default(tmp_path, fake_embedder, cfg):
-    # chunker.strip_frontmatter defaults False: v1 (src/mainframe_mcp/) never
+    # chunker.strip_frontmatter defaults False: the measured baseline never
     # stripped frontmatter. Preserve that chunking behavior by default;
     # enabling stripping requires its own retrieval evaluation.
     text = "---\ntype: note\nproject: p\n---\n\n# T\n\nbody text here.\n"

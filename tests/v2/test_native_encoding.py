@@ -191,15 +191,6 @@ def test_unknown_vectors_cannot_acquire_native_identity_without_rebuild(tmp_path
         Store(tmp_path / 'db').search(fake_embedder.embed_query('alpha'))
 
 
-def test_v1_refuses_native_config_instead_of_using_legacy_query_prefix(tmp_path):
-    from mainframe_mcp.config import load_config as load_v1
-
-    path = tmp_path / 'config.json'
-    path.write_text(json.dumps(native_config()))
-    with pytest.raises(ValueError, match='v2'):
-        load_v1(path)
-
-
 def test_offline_native_rebuild_records_new_contract_and_preserves_rollback(cfg, tmp_path):
     from mainframe.adapters.cli import run_offline_rebuild
     from mainframe.app import Mainframe

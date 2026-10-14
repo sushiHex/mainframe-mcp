@@ -6,14 +6,14 @@ The public `sushiHex/mainframe-mcp` repository is the primary home for code, iss
 
 ## Project Structure
 
-`src/mainframe_mcp/` contains the MCP server, retrieval pipeline, storage, and memory features. `tests/` contains GPU-free pytest coverage and shared fixtures. `configs/` provides hardware presets, `docs/` holds public documentation, and `eval/` contains evaluation tools and synthetic examples. Private corpora and experiment records belong outside this repository.
+`src/mainframe/` contains the daemon: retrieval pipeline, storage, capture lanes, service, and the CLI/MCP adapters. `tests/` contains GPU-free pytest coverage and shared fixtures. `configs/` provides hardware presets, `docs/` holds public documentation, and `eval/` contains evaluation tools and synthetic examples. Private corpora and experiment records belong outside this repository.
 
 ## Development Commands
 
 - `python -m pip install -e ".[test]"`: install editable packages and test dependencies.
 - `python -m pytest tests/ -q`: run the complete GPU-free suite.
-- `python -m pytest tests/test_secrets.py -q`: run focused secret-scrubbing tests.
-- `mainframe serve`: start the current v2 daemon (see `docs/V2.md`); `python -u -m mainframe_mcp.server` starts the legacy v1 stdio server only (see `docs/PREVIEW_RELEASE.md`).
+- `python -m pytest tests/v2/test_secrets.py -q`: run focused secret-scrubbing tests.
+- `mainframe serve`: start the daemon (see `docs/V2.md`).
 - `python -m pip wheel . --no-deps -w dist`: build a distribution wheel.
 
 ## Style and Testing
