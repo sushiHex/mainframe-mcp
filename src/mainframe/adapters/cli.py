@@ -497,6 +497,9 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
     t = sub.add_parser("install-task"); t.add_argument("--dry-run", action="store_true")
     c = sub.add_parser("capture"); c.add_argument("--file", required=True); c.add_argument("--project", required=True)
     c.add_argument("--title"); c.add_argument("--session-id", default="")
+    h = sub.add_parser("hook", help="agent-host hook entry points (event JSON on stdin; always exits 0)")
+    h.add_subparsers(dest="event", required=True).add_parser(
+        "session-end", help="Claude Code SessionEnd: extractive capture of the transcript into the capture lane")
     v = sub.add_parser("validate", help="run live synthetic smoke/soak checks in new state outside Git")
     v.add_argument("--output", required=True, help="new directory outside Git for state, credentials, and reports")
     v.add_argument("--duration", type=float, default=0, help="observation seconds; 0 runs smoke checks and restart")
@@ -504,6 +507,11 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
     v.add_argument("--clients", default="", help="load phase client counts, e.g. 1,4,8 (default: no load phase)")
     v.add_argument("--load-seconds", type=float, default=30, help="closed-loop seconds per client count")
     args = p.parse_args(argv)
+    if args.cmd == "hook":
+        # Before load_config: a hook runs inside session teardown, so even a
+        # malformed config is a hook.log line there, never a traceback here.
+        from mainframe.adapters.session_end import main as session_end_main
+        return session_end_main(config=config)
     config = config or load_config()
 
     if args.cmd == "validate":
