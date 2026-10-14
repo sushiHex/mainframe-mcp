@@ -1,5 +1,6 @@
 import builtins
 import json
+import os
 import subprocess
 import sys
 import urllib.parse
@@ -16,6 +17,15 @@ from mainframe.service.events import EventStore
 from v2.conftest import held
 from v2.fakes import fake_models
 from v2.helpers import write_md
+
+REAL_PROCESS_EXITED = getattr(cli, "process_exited", None)
+
+
+@pytest.fixture(autouse=True)
+def _a_stopped_fake_daemon_has_exited(monkeypatch):
+    """Discovery records THIS process's pid in these tests, and `down` waits for
+    the daemon's process to exit. A fake daemon's process exits with its lock."""
+    monkeypatch.setattr(cli, "process_exited", lambda pid: True, raising=False)
 
 
 class FakeHTTP:
@@ -519,6 +529,41 @@ def test_a_windowless_serve_keeps_what_a_crash_says(cfg, monkeypatch):
 def test_down_waits_for_lock(cfg, monkeypatch):
     http = FakeHTTP({**_up(cfg), ("POST", "/shutdown"): lambda b: {"stopping": True}})
     assert cli.main(["down"], config=cfg, http=http) == 0            # lock is free immediately
+
+
+def test_down_waits_for_the_daemon_process_not_just_its_lock(cfg, monkeypatch):
+    """The daemon releases the lock, then tears down for seconds more. A logon
+    task whose instance is still running IGNORES the next start, so an `up`
+    right after a `down` that returned on the lock alone started nothing
+    (measured: lock free at 24.8 s, process gone at 28.1 s)."""
+    polls = []
+    monkeypatch.setattr(cli, "process_exited", lambda pid: polls.append(pid) or len(polls) >= 3)
+    http = FakeHTTP({**_up(cfg), ("POST", "/shutdown"): lambda b: {"stopping": True}})
+    assert cli.main(["down"], config=cfg, http=http) == 0
+    assert polls == [os.getpid()] * 3                                # the pid discovery recorded
+
+
+def test_down_reports_a_daemon_process_that_outlives_its_lock(cfg, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "process_exited", lambda pid: False)
+    clock = {"t": 0.0}
+
+    def stepping_monotonic():
+        clock["t"] += 5.0
+        return clock["t"]
+    monkeypatch.setattr(cli.time, "monotonic", stepping_monotonic)
+    http = FakeHTTP({**_up(cfg), ("POST", "/shutdown"): lambda b: {"stopping": True}})
+    assert cli.main(["down"], config=cfg, http=http) == 1
+    assert f"process {os.getpid()} is still running" in capsys.readouterr().err
+
+
+def test_process_exited_tells_a_running_process_from_a_finished_one():
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        assert REAL_PROCESS_EXITED(child.pid) is False
+    finally:
+        child.kill()
+        child.wait(10)
+    assert REAL_PROCESS_EXITED(child.pid) is True
 
 
 def test_daemon_unreachable_mid_command(cfg, capsys):
