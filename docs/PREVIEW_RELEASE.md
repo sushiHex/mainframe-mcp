@@ -1,9 +1,36 @@
-# 2.0.0a2 Preview
+# 2.0.0b1
 
-**2.0.0a2** ships Harrier 0.6B native (1024-dim) and Qwen3-Reranker-0.6B.
-Install current source or the audited wheel for this behavior.
+**2.0.0b1** is the v2 daemon with the v1 server removed: Harrier 0.6B native
+(1024-dim) embedding and Qwen3-Reranker-0.6B, unchanged from 2.0.0a2, so an
+a2 index is reused as is — no rebuild.
 
-**Breaking change:** an index built under 2.0.0a1 must be rebuilt offline,
+## Changes since 2.0.0a2
+
+- **Readiness and startup.** `/healthz` and `status` report `readiness`
+  (`ready`, `warming`, `idle`, `blocked` with its remedy); `service.prewarm`
+  loads the models at start and `up`/`restart` wait for `ready` (#53).
+  `down` returns only when the daemon's processes are gone (#59).
+- **A daemon that dies comes back.** `mainframe serve` supervises `serve --once`
+  and restarts it with backoff; `mainframe down` is never undone (#61).
+- **Windows logon task without an elevated shell, and without a console
+  window**; a windowless daemon writes what a crash says to `daemon.out` (#56).
+- **Keyword index stays consistent.** It is rebuilt before lance's index merge
+  could leave it pointing at a dropped fragment (#50).
+- **Session capture hook.** `mainframe hook session-end` applies the
+  `capture.*` gate and writes one v2 capture (#63).
+- **Measured capacity.** `mainframe validate --clients 1,4,8` and the
+  [operating range](CAPACITY.md): up to four concurrent agents (#58, #62).
+- **Clients.** Codex setup and connection choice documented; two clients
+  verified on one daemon (#54).
+
+**Upgrading from 2.0.0a2:** Python 3.11 is now the minimum (3.10 reached
+end-of-life, #55). The [v1 removal](#v1-removal) (#60) means five v1-only
+configuration keys are now refused at startup; delete them if present.
+Re-run `mainframe install-task` once to get the windowless task (a task
+registered from an elevated shell can only be replaced from one).
+
+**2.0.0a2** switched the default stack from Qwen3-Embedding-8B to Harrier.
+**Breaking change there:** an index built under 2.0.0a1 must be rebuilt offline,
 because the default embedder changed (Qwen3-Embedding-8B, 4096-dim, to Harrier,
 1024-dim) and its stored vectors no longer share a space with a2's queries. The
 index marker records the embedder that built it, so a2 opening an a1 index
@@ -36,13 +63,12 @@ v2 excludes captures from search unless sessions are requested. See the
 ## Install an audited artifact
 
 Download the wheel and `SHA256SUMS` from the [releases page](https://github.com/sushiHex/mainframe-mcp/releases)
-for the version you intend to install: `v2.0.0a1` is the Qwen build; `v2.0.0a2`
-is built from this `main` by the maintainer release checks below, and until it
-is published, install from source. Verify the wheel hash against that manifest
-before installation:
+for the version you intend to install: `v2.0.0b1` is the current build;
+`v2.0.0a1` is the historical Qwen build. Verify the wheel hash against that
+manifest before installation:
 
 ```powershell
-Get-FileHash ./mainframe_mcp-2.0.0a2-py3-none-any.whl -Algorithm SHA256
+Get-FileHash ./mainframe_mcp-2.0.0b1-py3-none-any.whl -Algorithm SHA256
 ```
 
 On Linux, use `sha256sum -c SHA256SUMS` with both distribution files present.
@@ -54,7 +80,7 @@ python -m venv .venv-preview
 # POSIX: source .venv-preview/bin/activate
 python -m pip install --upgrade pip
 # Install CUDA-enabled PyTorch using the selector linked below, then:
-python -m pip install ./mainframe_mcp-2.0.0a2-py3-none-any.whl
+python -m pip install ./mainframe_mcp-2.0.0b1-py3-none-any.whl
 mainframe --help
 ```
 
