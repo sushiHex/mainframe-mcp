@@ -142,13 +142,13 @@ On Windows, run `mainframe install-task` once (no elevated shell needed) for a w
 
 | Symptom | Cause and remedy |
 | --- | --- |
-| An agent reports ``mainframed is not running - run `mainframe up` `` | The daemon is down: it was stopped, or it died, and the logon task does not restart a daemon that dies. Run `mainframe up`; the client reconnects on its next call. |
+| An agent reports ``mainframed is not running - run `mainframe up` `` | The daemon is down: it was stopped with `mainframe down`, or it died and its supervisor gave up after six deaths in a row (a daemon that died once is back within seconds on its own). Read `daemon.out` for the cause, then run `mainframe up`; the client reconnects on its next call. |
 | `up` says no logon task answered | No task is registered, so `up` started a detached daemon that will not survive a reboot. Run `mainframe install-task` once. |
 | `readiness` is `blocked` with a model error | A model failed to load and is backing off. The reason carries the error and guidance; `mainframe reload` clears the backoff. |
 | `readiness` is `blocked` with "index built under different settings" | An embedding or chunking setting changed. Run `mainframe down`, then `mainframe rebuild`. |
 | The first search after a restart is slow | The models load on first use. Enable `service.prewarm`. |
 | `daemon.log` warns that keyword search is failing | The keyword index needs rebuilding. The next optimization does it automatically; `mainframe optimize` does it now. |
-| A daemon started by the logon task died | It writes what a crash says to `daemon.out` in the state directory. |
+| A daemon started by the logon task died | It writes what a crash says to `daemon.out` in the state directory, and its supervisor starts it again (1, 2, 4, 8, 16 s apart; it stops trying after six deaths in a row). `mainframe serve --once` runs one daemon process with no restarts, for debugging. |
 
 ## For agents
 

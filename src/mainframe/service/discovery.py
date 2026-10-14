@@ -19,15 +19,21 @@ from pathlib import Path
 from mainframe import __version__
 from mainframe.memory.atomic import write_atomic
 
+# Set by `mainframe serve` (the supervisor) for the `serve --once` child it runs;
+# discovery records it so `mainframe down` can wait for the whole tree.
+SUPERVISOR_PID_ENV = "MAINFRAME_SUPERVISOR_PID"
+
 
 def discovery_path(config) -> Path:
     return Path(config["paths"]["mainframe_dir"]) / "daemon.json"
 
 
 def write_discovery(config, port: int, nonce: str):
-    write_atomic(discovery_path(config), json.dumps({"pid": os.getpid(), "port": port, "nonce": nonce,
-                                                     "started_at": datetime.now().isoformat(timespec="seconds"),
-                                                     "version": __version__}, indent=2))
+    info = {"pid": os.getpid(), "port": port, "nonce": nonce,
+            "started_at": datetime.now().isoformat(timespec="seconds"), "version": __version__}
+    if os.environ.get(SUPERVISOR_PID_ENV, "").isdigit():
+        info["supervisor_pid"] = int(os.environ[SUPERVISOR_PID_ENV])
+    write_atomic(discovery_path(config), json.dumps(info, indent=2))
 
 
 def read_discovery(config):

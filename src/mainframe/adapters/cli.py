@@ -17,7 +17,7 @@ import httpx
 
 from mainframe.config import load_config
 from mainframe.service.daemon import LOCK_HELD_EXIT, Daemon, lock_path
-from mainframe.service.discovery import probe, read_discovery
+from mainframe.service.discovery import SUPERVISOR_PID_ENV, probe, read_discovery
 
 DOWN_EXIT = 2
 DOWN_WAIT_SECONDS = 30          # fallback only: service.shutdown_timeout_seconds is the real bound
@@ -35,6 +35,10 @@ START_WAIT_SECONDS = 120
 START_POLL_SECONDS = 1.0
 LOG_WAIT_SECONDS = 5.0      # a handoff takes moments; anything longer is another holder
 LOG_POLL_SECONDS = 0.25
+SERVE_ARGV = ["-m", "mainframe.adapters.cli", "serve"]   # what the logon task and the detached fallback run
+ONCE_ARGV = SERVE_ARGV + ["--once"]                      # one daemon process, no restarts: what `serve` supervises
+RESTART_DELAYS = (1, 2, 4, 8, 16)   # seconds before each successive restart of a dead daemon; then give up
+STABLE_SECONDS = 60                 # a daemon that served this long had started: its death earns a fresh budget
 
 # The maintenance verbs the CLI exposes, each a plain POST to /jobs/<name>.
 # `index` is deliberately absent: `Mainframe.maintain` treats it as an alias for
@@ -226,13 +230,86 @@ def spawn_detached(config) -> bool:
         # DEVNULL, not an unredirected handle: what kills a detached daemon is an
         # INVALID stdout, and DEVNULL is valid. Losing the log costs diagnosis,
         # never the daemon.
-        subprocess.Popen([sys.executable, "-m", "mainframe.adapters.cli", "serve"],
+        subprocess.Popen([sys.executable, *SERVE_ARGV],
                          stdout=sink or subprocess.DEVNULL, stderr=subprocess.STDOUT,
                          stdin=subprocess.DEVNULL, **extra)
     finally:
         if sink is not None:
             sink.close()
     return sink is not None
+
+
+def supervise(run_child, sleep=time.sleep, clock=time.monotonic) -> int:
+    """Keep ONE daemon alive until it stops on purpose.
+
+    `run_child` runs `serve` to completion and returns its exit code. Exit 0
+    is the daemon's own decision to stop - `mainframe down`, `/shutdown`, a
+    signal uvicorn handles - and ends supervision: an intentional stop is
+    never undone. `LOCK_HELD_EXIT` means another instance is serving, so
+    there is nothing to restart. Anything else is a death - a crash, a kill,
+    a startup failure - and the daemon is started again after a growing delay.
+
+    What a kill looks like is the one platform question here. Windows has no
+    graceful kill: TerminateProcess (taskkill /F, Task Manager, os.kill) sets
+    a non-zero code, so every kill there is a death, and the only clean stops
+    are the ones the daemon answers itself. On POSIX, SIGTERM/SIGINT reach
+    uvicorn's handler and exit 0 (clean, as today's foreground `serve`), while
+    SIGKILL cannot be handled and reports -9. One rule - zero is intentional -
+    reads both correctly.
+
+    The budget bounds a daemon that dies at startup every time: one restart
+    per delay in `RESTART_DELAYS`, then this returns the last exit code (a
+    restart storm would bury the cause under its own noise). A daemon that
+    served for `STABLE_SECONDS` before dying earns the budget back - the
+    failure was not in starting, and the next start is expected to work."""
+    failures = 0
+    while True:
+        started = clock()
+        rc = run_child()
+        if rc == 0 or rc == LOCK_HELD_EXIT:
+            return rc
+        if clock() - started >= STABLE_SECONDS:
+            failures = 0
+        if failures >= len(RESTART_DELAYS):
+            print(f"mainframe: daemon died {failures + 1} times in a row (last exit {rc}); giving up",
+                  file=sys.stderr)
+            return rc
+        delay = RESTART_DELAYS[failures]
+        failures += 1
+        print(f"mainframe: daemon exited {rc}; restarting in {delay} s", file=sys.stderr)
+        sleep(delay)
+
+
+def _std(stream):
+    """`stream` when it is a real file the child can write to, else None (inherit).
+    None itself, a closed stream, and pytest's capture all answer None."""
+    try:
+        stream.fileno()
+    except (AttributeError, OSError, ValueError):
+        return None
+    return stream
+
+
+def serve_child() -> int:
+    """One `serve --once`, run to completion, writing where the supervisor writes:
+    under pythonw that is daemon.out (see the `serve` branch of `main`), and
+    handing the handle down is what keeps the child's crash readable there.
+
+    On an interrupt the operator stopped BOTH processes - a console delivers
+    Ctrl-C to each - so wait for the child to finish its own shutdown and
+    report a clean stop. `subprocess.call` would kill it after a quarter
+    second, cutting a graceful shutdown short."""
+    # The child's discovery records this pid beside its own, so `down` can
+    # wait for the supervisor too: it IS the logon task's instance, and a task
+    # with IgnoreNew drops the next start while that instance runs (#59).
+    env = dict(os.environ, **{SUPERVISOR_PID_ENV: str(os.getpid())})
+    proc = subprocess.Popen([sys.executable, *ONCE_ARGV], stdin=subprocess.DEVNULL, env=env,
+                            stdout=_std(sys.stdout), stderr=_std(sys.stderr))
+    try:
+        return proc.wait()
+    except KeyboardInterrupt:
+        proc.wait()
+        return 0
 
 
 def start_daemon(config, runner, spawn, http=None, timeout=START_WAIT_SECONDS) -> int:
@@ -347,12 +424,14 @@ def process_exited(pid) -> bool:
     return False
 
 
-def wait_for_lock(config, pid=None) -> int:
-    """Wait until the daemon is really gone: nothing holds the lock AND its
-    process (`pid`, from discovery) has exited. The lock alone is not enough -
-    the daemon releases it and then tears down for seconds more, and a logon
-    task whose instance is still running ignores the next start, so an `up`
-    right after a `down` that returned on the lock started nothing."""
+def wait_for_lock(config, pids=()) -> int:
+    """Wait until the daemon is really gone: nothing holds the lock AND every
+    process in `pids` (from discovery: the daemon and, when it has one, its
+    supervisor) has exited. The lock alone is not enough - the daemon releases
+    it and then tears down for seconds more, and a logon task whose instance
+    is still running ignores the next start, so an `up` right after a `down`
+    that returned on the lock started nothing. The supervisor is that
+    instance, and it exits only after its child has."""
     from filelock import FileLock, Timeout
     # The daemon finishes its IN-FLIGHT job before releasing the lock, and
     # that job can be a rescan of thousands of files. Wait for the daemon's
@@ -375,11 +454,12 @@ def wait_for_lock(config, pid=None) -> int:
                     print("mainframe: waiting for the daemon to finish its current job "
                           f"({int(now - start)}s elapsed)", file=sys.stderr)
                     next_progress = now + DOWN_PROGRESS_SECONDS
-        if released and (pid is None or process_exited(pid)):
+        if released and all(process_exited(pid) for pid in pids):
             return 0
         time.sleep(0.5)
     if released:
-        print(f"mainframe: the daemon released its lock, but process {pid} is still running "
+        alive = ", ".join(str(pid) for pid in pids if not process_exited(pid))
+        print(f"mainframe: the daemon released its lock, but process {alive} is still running "
               f"after {int(limit)} s", file=sys.stderr)
     else:
         print(f"mainframe: daemon still holds the lock after {int(limit)} s", file=sys.stderr)
@@ -387,16 +467,20 @@ def wait_for_lock(config, pid=None) -> int:
 
 
 def stop_daemon(client, config) -> int:
-    """Ask a RUNNING daemon to stop, and return once it is gone - lock AND process."""
-    pid = (client.info or {}).get("pid")           # read before shutdown withdraws discovery
+    """Ask a RUNNING daemon to stop, and return once it is gone - lock AND
+    process tree: the daemon, and the supervisor that will exit after it."""
+    info = client.info or {}                       # read before shutdown withdraws discovery
+    pids = [p for p in (info.get("pid"), info.get("supervisor_pid")) if p]
     rc = _call(lambda: _emit(client.post("/shutdown")))
-    return rc if rc != 0 else wait_for_lock(config, pid)
+    return rc if rc != 0 else wait_for_lock(config, pids)
 
 
 def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
     p = argparse.ArgumentParser(prog="mainframe", description="Mainframe v2: local knowledge base daemon")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("serve", help="run the daemon in the foreground")
+    sv = sub.add_parser("serve", help="run the daemon in the foreground, starting it again when it dies "
+                                      "(a clean stop - `mainframe down` - ends it)")
+    sv.add_argument("--once", action="store_true", help="run one daemon process, no restarts")
     u = sub.add_parser("up", help="start the daemon and wait until it answers (and is done warming up)")
     u.add_argument("--timeout", type=float, default=START_WAIT_SECONDS)
     sub.add_parser("down", help="ask the daemon to stop and wait for it")
@@ -438,8 +522,10 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
             if sink is not None:
                 sys.stdout = sys.stderr = io.TextIOWrapper(sink, encoding="utf-8", errors="backslashreplace",
                                                            line_buffering=True)
-        serve(config)
-        return 0
+        if args.once:
+            serve(config)
+            return 0
+        return supervise(serve_child)
     if args.cmd == "install-task":
         xml_path = Path(config["paths"]["mainframe_dir"]) / "mainframe-task.xml"
         xml_path.parent.mkdir(parents=True, exist_ok=True)

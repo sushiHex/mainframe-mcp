@@ -345,7 +345,7 @@ def test_a_detached_serve_redirects_its_output(cfg, monkeypatch):
 
     monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
     cli.spawn_detached(cfg)
-    assert seen["argv"][1:] == ["-m", "mainframe.adapters.cli", "serve"]
+    assert seen["argv"][1:] == cli.SERVE_ARGV       # the supervised form: the fallback daemon comes back too
     assert seen["stdout"] is not None
     assert seen["stderr"] == cli.subprocess.STDOUT and seen["stdin"] == cli.subprocess.DEVNULL
 
@@ -521,9 +521,159 @@ def test_a_windowless_serve_keeps_what_a_crash_says(cfg, monkeypatch):
     monkeypatch.setattr(daemon_mod, "serve", crashing_serve)
     monkeypatch.setattr(sys, "stdout", None)
     monkeypatch.setattr(sys, "stderr", None)
-    assert cli.main(["serve"], config=cfg) == 0
+    assert cli.main(["serve", "--once"], config=cfg) == 0
     sys.stderr.flush()
     assert "traceback would land here" in cli.daemon_out(cfg).read_text(encoding="utf-8")
+    # ... and the supervisor, which is what the task actually runs, writes there too
+    monkeypatch.setattr(cli, "supervise", lambda run_child, **kw: print("supervisor says", file=sys.stderr) or 0)
+    assert cli.main(["serve"], config=cfg) == 0
+    sys.stderr.flush()
+    assert "supervisor says" in cli.daemon_out(cfg).read_text(encoding="utf-8")
+
+
+# ---- crash recovery: `serve` is a supervisor; `serve --once` is the daemon process ----
+
+def _children(*codes):
+    """A `run_child` that exits with each code in turn, counting its runs."""
+    it = iter(codes)
+    runs = []
+
+    def run():
+        runs.append(1)
+        return next(it)
+    return run, runs
+
+
+def test_the_logon_task_action_is_unchanged_and_now_supervises(cfg, monkeypatch):
+    """Task Scheduler's RestartOnFailure does not fire on an action that dies
+    later (measured: a killed daemon stayed down for 150 s). What brings the
+    daemon back is the process the task runs - and the task already registered
+    was created from an elevated shell, so its Arguments cannot change without
+    a prompt. `serve` itself is therefore the supervisor; `--once` is the bare
+    process it runs, and the one a developer debugs."""
+    assert "<Arguments>-m mainframe.adapters.cli serve</Arguments>" in cli.task_xml(cfg)
+    assert cli.ONCE_ARGV == cli.SERVE_ARGV + ["--once"]
+    seen = []
+    monkeypatch.setattr(cli, "supervise", lambda run_child, **kw: seen.append(run_child) or 7)
+    assert cli.main(["serve"], config=cfg) == 7
+    assert seen == [cli.serve_child]
+    import mainframe.service.daemon as daemon_mod
+    monkeypatch.setattr(daemon_mod, "serve", lambda config: seen.append("once"))
+    assert cli.main(["serve", "--once"], config=cfg) == 0
+    assert seen == [cli.serve_child, "once"]
+
+
+def test_supervise_restarts_a_daemon_that_died(capsys):
+    run, runs = _children(1, 0)
+    slept = []
+    assert cli.supervise(run, sleep=slept.append, clock=lambda: 0.0) == 0
+    assert len(runs) == 2 and slept == [cli.RESTART_DELAYS[0]]
+    err = capsys.readouterr().err
+    assert "restarting in 1 s" in err and err.isascii(), err
+
+
+@pytest.mark.parametrize("code", [0, cli.LOCK_HELD_EXIT])
+def test_supervise_never_undoes_an_intentional_stop(code):
+    """Exit 0 is the daemon deciding to stop (`down`, `/shutdown`); exit 3 is
+    another instance already serving. Neither is a death to recover from."""
+    run, runs = _children(code, 0)
+    slept = []
+    assert cli.supervise(run, sleep=slept.append, clock=lambda: 0.0) == code
+    assert len(runs) == 1 and slept == []
+
+
+def test_supervise_gives_up_on_a_daemon_that_dies_at_startup(capsys):
+    """A daemon that cannot start is restarted a bounded number of times, with
+    growing delays, and the last exit code is then returned - no restart storm."""
+    run, runs = _children(*([1] * 20))
+    slept = []
+    assert cli.supervise(run, sleep=slept.append, clock=lambda: 0.0) == 1
+    assert len(runs) == len(cli.RESTART_DELAYS) + 1
+    assert slept == list(cli.RESTART_DELAYS) and slept == sorted(slept)
+    assert sum(slept) < 60                      # the whole budget fits in the minute the first restart promises
+    assert "giving up" in capsys.readouterr().err
+
+
+def test_a_daemon_that_served_a_while_earns_its_restarts_back():
+    """Crashing after an hour of service is not failing to start: the next
+    start is expected to work, so the budget does not run out across uptime."""
+    now = [0.0]
+
+    def run():
+        now[0] += cli.STABLE_SECONDS           # each child lives exactly long enough to count as started
+        return 1
+    slept = []
+    calls = {"n": 0}
+
+    def sleep(s):
+        slept.append(s)
+        calls["n"] += 1
+        if calls["n"] == 3 * len(cli.RESTART_DELAYS):
+            raise StopIteration             # enough: it would go on forever, which is the point
+    with pytest.raises(StopIteration):
+        cli.supervise(run, sleep=sleep, clock=lambda: now[0])
+    assert set(slept) == {cli.RESTART_DELAYS[0]}
+
+
+def test_serve_child_runs_once_and_waits_out_an_interrupt(monkeypatch):
+    """Ctrl-C reaches both processes. The child shuts down gracefully (that can
+    take seconds); the supervisor waits for it and calls the stop clean."""
+    seen = {}
+
+    class FakeProc:
+        waits = 0
+        def wait(self):
+            FakeProc.waits += 1
+            if FakeProc.waits == 1:
+                raise KeyboardInterrupt
+            return 0
+
+    def fake_popen(argv, **kw):
+        seen.update(argv=argv, **kw)
+        return FakeProc()
+
+    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
+    assert cli.serve_child() == 0
+    assert seen["argv"] == [sys.executable, *cli.ONCE_ARGV] and seen["stdin"] == cli.subprocess.DEVNULL
+    assert seen["env"][cli.SUPERVISOR_PID_ENV] == str(os.getpid())     # so discovery can name the supervisor
+    assert FakeProc.waits == 2
+
+
+def test_discovery_names_the_supervisor_and_down_waits_for_it_too(cfg, monkeypatch):
+    """The supervisor IS the logon task's instance. A task with IgnoreNew
+    drops the next start while that instance runs, so a `down` that returned
+    when only the child was gone would make the `up` after it start nothing -
+    the #59 race again, one process up. The child records the pid its
+    supervisor handed it, and `down` waits for both."""
+    monkeypatch.setenv(cli.SUPERVISOR_PID_ENV, "4242")
+    write_discovery(cfg, 1234, "n1")
+    assert cli.read_discovery(cfg)["supervisor_pid"] == 4242 and cli.read_discovery(cfg)["pid"] == os.getpid()
+    polls = []
+    monkeypatch.setattr(cli, "process_exited", lambda pid: polls.append(pid) or pid != 4242 or len(polls) >= 4)
+    http = FakeHTTP({("GET", "/healthz"): lambda b: {"ok": True, "nonce": "n1"},
+                     ("POST", "/shutdown"): lambda b: {"stopping": True}})
+    assert cli.main(["down"], config=cfg, http=http) == 0
+    assert os.getpid() in polls and polls.count(4242) >= 2         # kept waiting on the supervisor alone
+    monkeypatch.delenv(cli.SUPERVISOR_PID_ENV)
+    write_discovery(cfg, 1234, "n1")
+    assert "supervisor_pid" not in cli.read_discovery(cfg)         # a `--once` daemon has none to name
+
+
+def test_serve_child_hands_its_log_to_the_child(monkeypatch, tmp_path):
+    """Under pythonw the supervisor writes to daemon.out; the child must write
+    there too, or a crash under the logon task would again say nothing."""
+    seen = {}
+    monkeypatch.setattr(cli.subprocess, "Popen",
+                        lambda argv, **kw: seen.update(**kw) or type("P", (), {"wait": lambda self: 0})())
+    with open(tmp_path / "daemon.out", "ab") as sink:
+        monkeypatch.setattr(sys, "stdout", sink)
+        monkeypatch.setattr(sys, "stderr", sink)
+        assert cli.serve_child() == 0
+    assert seen["stdout"] is sink and seen["stderr"] is sink
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    assert cli.serve_child() == 0
+    assert seen["stdout"] is None and seen["stderr"] is None     # nothing to hand down: inherit
 
 
 def test_down_waits_for_lock(cfg, monkeypatch):
