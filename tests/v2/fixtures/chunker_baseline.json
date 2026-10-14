@@ -1,0 +1,82 @@
+[
+ {
+  "chunk_index": 0,
+  "heading": "(preamble)",
+  "char_start": 0,
+  "char_end": 64,
+  "token_count": 11,
+  "text": "---\ntype: note\nproject: example\ntags: [chunking, baseline]\n---"
+ },
+ {
+  "chunk_index": 1,
+  "heading": "Chunker baseline fixture",
+  "char_start": 64,
+  "char_end": 374,
+  "token_count": 63,
+  "text": "# Chunker baseline fixture\n\nThis document exists so the chunker can be held to the exact output that the\nretrieval baseline was measured under. It mixes the constructs the corpus is\nmade of: frontmatter, nested headings, tiny sections, long paragraphs that\noverflow one chunk, fenced code, tables, and lists."
+ },
+ {
+  "chunk_index": 2,
+  "heading": "Overview",
+  "char_start": 374,
+  "char_end": 617,
+  "token_count": 54,
+  "text": "## Overview\n\nThe index is disposable and the files are authoritative. Every chunk records\nits heading, its character span in the source file, and its token count, and\nthe search layer uses those spans to cite line numbers back into the file."
+ },
+ {
+  "chunk_index": 3,
+  "heading": "Another tiny section",
+  "char_start": 617,
+  "char_end": 737,
+  "token_count": 26,
+  "text": "### Tiny section\n\nOne line.\n\n\n### Another tiny section\n\nAlso one line, which the chunker may merge with its neighbour."
+ },
+ {
+  "chunk_index": 4,
+  "heading": "A long section",
+  "char_start": 736,
+  "char_end": 1706,
+  "token_count": 209,
+  "text": "## A long section\n\nParagraph one describes the embedding path. Documents are split by heading,\nthen recursively by paragraph and sentence until each piece fits the token\nbudget, with a fixed overlap ratio carried between neighbouring pieces so that\na fact straddling a boundary is still retrievable from at least one side. The\noverlap is measured in tokens, not characters, and the tokenizer used for the\nbudget is the same one the embedder uses, which is why changing the embedder\nchanges the index fingerprint.\n\nParagraph two describes the reranking path. The candidate pool is fixed at\ntwenty passages drawn from the vector branch, with the keyword branch acting\nas a backstop when the vector branch returns too few candidates. The reranker\nscores each query and passage pair with a yes or no judgement, keeping only\nthe final token's logits, and the top three passages are returned with their\nspans so the agent can read the surrounding lines directly from the file."
+ },
+ {
+  "chunk_index": 5,
+  "heading": "A long section",
+  "char_start": 1364,
+  "char_end": 2142,
+  "token_count": 167,
+  "text": "ranch, with the keyword branch acting\nas a backstop when the vector branch returns too few candidates. The reranker\nscores each query and passage pair with a yes or no judgement, keeping only\nthe final token's logits, and the top three passages are returned with their\nspans so the agent can read the surrounding lines directly from the file.\n\nParagraph three describes capture. A capture is an immutable markdown file\nwritten once under the capture root, scrubbed for secrets before it reaches\ndisk, and picked up by the watcher like any other file. Captures are excluded\nfrom search by default, because an accreting lane of session notes would\ndilute the fixed candidate pool that curated knowledge competes for, and are\nincluded only when the caller asks for them explicitly."
+ },
+ {
+  "chunk_index": 6,
+  "heading": "A long section",
+  "char_start": 1800,
+  "char_end": 2578,
+  "token_count": 167,
+  "text": "r the capture root, scrubbed for secrets before it reaches\ndisk, and picked up by the watcher like any other file. Captures are excluded\nfrom search by default, because an accreting lane of session notes would\ndilute the fixed candidate pool that curated knowledge competes for, and are\nincluded only when the caller asks for them explicitly.\n\nParagraph four describes the daemon. One process owns the index, holds a file\nlock for its whole life, serialises every mutation through a single writer\nthread, and answers health probes from bookkeeping alone so that a probe never\nloads a model. A rebuild runs offline under the same lock after the daemon has\nbeen stopped, and the first batch after a rebuild creates the table at\nwhatever dimension the configured embedder produces."
+ },
+ {
+  "chunk_index": 7,
+  "heading": "A long section",
+  "char_start": 2236,
+  "char_end": 3091,
+  "token_count": 174,
+  "text": "hole life, serialises every mutation through a single writer\nthread, and answers health probes from bookkeeping alone so that a probe never\nloads a model. A rebuild runs offline under the same lock after the daemon has\nbeen stopped, and the first batch after a rebuild creates the table at\nwhatever dimension the configured embedder produces.\n\nParagraph five is deliberately repetitive filler so that this section is long\nenough to need more than one chunk and therefore exercises the overlap rule.\nFiller sentence number one carries no information. Filler sentence number two\ncarries no information either. Filler sentence number three restates the first\ntwo. Filler sentence number four restates the third. Filler sentence number\nfive closes the paragraph without adding anything the reader did not already\nknow from the sentences that came before it."
+ },
+ {
+  "chunk_index": 8,
+  "heading": "Code and tables",
+  "char_start": 3091,
+  "char_end": 3839,
+  "token_count": 153,
+  "text": "## Code and tables\n\n```python\ndef chunk_markdown(text: str, max_tokens: int = 256, overlap_ratio: float = 0.35):\n    \"\"\"Split by heading, then recursively, carrying overlap between pieces.\"\"\"\n    sections = split_by_heading(text)\n    for section in sections:\n        yield from split_recursive(section, max_tokens, overlap_ratio)\n```\n\n| Setting | Default | Effect |\n|---|---|---|\n| chunk_size | 256 | Token budget per chunk |\n| overlap_ratio | 0.35 | Share of the budget carried into the next chunk |\n| strip_frontmatter | false | Keep the YAML header as content |\n\n- First list item, short.\n- Second list item, a little longer than the first but still a single line.\n- Third list item.\n  - A nested item under the third.\n  - Another nested item."
+ },
+ {
+  "chunk_index": 9,
+  "heading": "Closing",
+  "char_start": 3839,
+  "char_end": 3922,
+  "token_count": 20,
+  "text": "## Closing\n\nA final short section, so the document does not end inside a long one."
+ }
+]

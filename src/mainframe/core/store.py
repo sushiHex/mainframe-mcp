@@ -14,10 +14,11 @@
   detected instead of silently mixing two regimes into one index. Native
   encoding also persists that identity in the table schema.
 - There is no ownership protocol, because there is no collision to arbitrate:
-  v2 keeps its rows in `<mainframe_dir>/index.lancedb` while the still-
-  installed v1 (`mainframe_mcp`) keeps its own `.lancedb`. Two namespaces are
-  simpler than teaching two shipping implementations not to destroy each
-  other's `chunks` table.
+  v2 keeps its rows in `<mainframe_dir>/index.lancedb`, a namespace of its own.
+  The retired v1 stdio server kept `.lancedb` in the same directory with an
+  incompatible `chunks` table, and that directory may still exist on disk; it
+  is never opened. Two namespaces were simpler than teaching two shipping
+  implementations not to destroy each other's table.
 """
 
 import json

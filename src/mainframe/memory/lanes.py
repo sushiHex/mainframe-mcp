@@ -1,9 +1,10 @@
 """The three lanes and receipts.
 
 knowledge: <repos_dir>/<repo>/{research,docs,machines,playbooks}/**/*.md + root
-           context files (git-tracked; the scanner mirrors v1's rules exactly
-           so the eval corpus is identical — except research/sessions/, the
-           v1 raw lane, which remains separate from v2 captures).
+           context files (git-tracked; the rules are the ones the eval corpus
+           was measured under — except research/sessions/, the retired v1
+           server's raw capture lane, which may still exist on disk and stays
+           separate from v2 captures).
 capture:   <mainframe_dir>/captures/<repo>/*.md (immutable; quarantine/ and
            overflow/ subdirs are neither indexed nor pending).
 note:      promoted <repo>/research/memory/<slug>.md (+ <slug>.sources.json);

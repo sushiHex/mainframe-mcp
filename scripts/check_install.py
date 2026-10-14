@@ -26,9 +26,8 @@ for name in expected:
         raise RuntimeError(f"{name} was imported outside the installed environment")
 
 distribution = metadata.distribution("mainframe-mcp")
-for name in ("mainframe", "mainframe_mcp"):
-    if importlib.import_module(name).__version__ != distribution.version:
-        raise RuntimeError(f"{name} runtime version differs from installed metadata")
+if importlib.import_module("mainframe").__version__ != distribution.version:
+    raise RuntimeError("mainframe runtime version differs from installed metadata")
 entrypoints = {e.name: e for e in distribution.entry_points if e.group == "console_scripts"}
 for name in ("mainframe", "mainframe-mcp"):
     if not callable(entrypoints[name].load()):
@@ -36,22 +35,20 @@ for name in ("mainframe", "mainframe-mcp"):
 if entrypoints["mainframe-mcp"].value != "mainframe.adapters.mcp_stdio_shim:main":
     raise RuntimeError("default MCP entry point must share the daemon's Harrier stack")
 
-from mainframe import config as v2
-from mainframe_mcp import config as v1
-default = v2.load_config(root / "missing.json")
+from mainframe.config import load_config
+default = load_config(root / "missing.json")
 if default["embedder"]["model"] != "microsoft/harrier-oss-v1-0.6b" or default["embedder"]["encoding"] != "native":
     raise RuntimeError("installed default does not select native Harrier")
-for module in (v1, v2):
-    reranker = module.load_config(root / "missing.json")["reranker"]
-    if (reranker["model"] != "Qwen/Qwen3-Reranker-0.6B"
-            or reranker["revision"] != "e61197ed45024b0ed8a2d74b80b4d909f1255473"
-            or reranker["quantize"]):
-        raise RuntimeError("installed default does not select the pinned BF16 compact reranker")
-    config = module.load_config(root / "settings.json")
-    if Path(config["paths"]["mainframe_dir"]).resolve() != root / "state":
-        raise RuntimeError("installed configuration did not honor its state directory")
-    if config["embedder"]["model"] != "synthetic-embedding-model":
-        raise RuntimeError("installed configuration did not honor its model setting")
+reranker = default["reranker"]
+if (reranker["model"] != "Qwen/Qwen3-Reranker-0.6B"
+        or reranker["revision"] != "e61197ed45024b0ed8a2d74b80b4d909f1255473"
+        or reranker["quantize"]):
+    raise RuntimeError("installed default does not select the pinned BF16 compact reranker")
+config = load_config(root / "settings.json")
+if Path(config["paths"]["mainframe_dir"]).resolve() != root / "state":
+    raise RuntimeError("installed configuration did not honor its state directory")
+if config["embedder"]["model"] != "synthetic-embedding-model":
+    raise RuntimeError("installed configuration did not honor its model setting")
 
 import torch
 if torch.cuda.is_initialized():

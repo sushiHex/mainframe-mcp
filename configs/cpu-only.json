@@ -12,8 +12,7 @@
   },
   "reranker": {
     "model": "cross-encoder/ms-marco-MiniLM-L12-v2",
-    "enabled": true,
-    "top_k": 5
+    "enabled": true
   },
   "nli": {
     "enabled": false
@@ -24,18 +23,15 @@
   "chunker": {
     "chunk_size": 512,
     "overlap_ratio": 0.25,
-    "min_section_tokens": 10,
     "drop_headings": []
   },
   "search": {
-    "fetch_multiplier": 4,
     "rerank_top_k": 5
   },
   "tiers": {
     "library": 0.9,
     "project": 0.93,
     "docs": 0.95,
-    "research": 0.97,
-    "archive": 1.1
+    "research": 0.97
   }
 }

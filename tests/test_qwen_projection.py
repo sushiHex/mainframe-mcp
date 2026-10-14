@@ -1,17 +1,16 @@
 """Native Qwen scoring must not materialize unused vocabulary projections."""
 
-import importlib
 import re
 from types import SimpleNamespace
 
 import pytest
 import torch
 
+from mainframe.core.reranker import Reranker
 
-@pytest.mark.parametrize("module", ["mainframe_mcp.reranker", "mainframe.core.reranker"])
-def test_final_token_projection_preserves_scores_and_fixed_batch_order(module):
-    cls = importlib.import_module(module).Reranker
-    reranker = cls.__new__(cls)
+
+def test_final_token_projection_preserves_scores_and_fixed_batch_order():
+    reranker = Reranker.__new__(Reranker)
     reranker.instruction = "Find relevant evidence"
     reranker._quantized = True
     reranker._yes_id, reranker._no_id = 0, 1

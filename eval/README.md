@@ -3,22 +3,18 @@
 Evaluate retrieval against your own corpus and expected answers. The GPU-free
 pytest suite checks behavior; this harness measures retrieval quality.
 
-## Select the implementation
+## Select the mode
 
 ```bash
-# v2: running daemon, or configured index when it is stopped
+# running daemon, or configured index when it is stopped
 python -u eval/evaluate.py --live
 
-# v2: require the daemon and avoid loading models here
+# require the daemon and avoid loading models here
 python -u eval/evaluate.py --daemon
-
-# v1: original stdio server's index
-python -u eval/evaluate_v1.py --live
 ```
 
 Use the same configuration and query set for comparisons. Set `MAINFRAME_CONFIG`
-for the v2 deployment being evaluated. The legacy v1 harness expects the default
-`~/.claude/mainframe` state directory. Run comparison workers sequentially and
+for the deployment being evaluated. Run comparison workers sequentially and
 record unrelated model allocations in the resource telemetry.
 
 ## Shared desktop GPU runs

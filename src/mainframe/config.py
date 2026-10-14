@@ -1,6 +1,6 @@
 """Configuration — single source of truth for models, lanes, index, capture,
-memory, and service knobs. Top-level model sections keep the v1
-shape so the kept modules and the shipped presets read them unchanged."""
+memory, and service knobs. The top-level model sections are the shape the
+shipped presets and existing config files already use."""
 
 import json
 import logging
@@ -124,15 +124,6 @@ def _reset_contract_for_model_change(current: dict, override: dict) -> None:
                     "revision": None, "query_prompt": None})
 
 
-# v1 (`mainframe_mcp`) is still installed and reads the SAME
-# `~/.claude/mainframe/config.json` and the same `configs/` presets, so a live
-# config legitimately carries keys v2 does not own. These are not typos, and
-# refusing to start over them would brick the daemon on every machine that has
-# both. Keep these exemptions while v1 and v2 share configuration files.
-_V1_ONLY_KEYS = frozenset({"reranker.top_k", "chunker.min_section_tokens", "search.fetch_multiplier",
-                           "tiers.archive", "memory.consolidate_threshold"})
-
-
 def _deep_merge(base: dict, override: dict, source: str = "", prefix: str = "") -> None:
     """Merge `override` into `base`.
 
@@ -141,7 +132,7 @@ def _deep_merge(base: dict, override: dict, source: str = "", prefix: str = "") 
     the user believes is in force and which nothing ever reads. A leading
     underscore marks a comment (`_name`, `_vram` in the presets) and is allowed
     anywhere. Presets pass no `source` — they are repo-shipped, not hand-typed,
-    and deliberately shared with v1."""
+    and a test holds every shipped preset to the same rule."""
     if not prefix and isinstance(base.get("embedder"), dict) \
             and isinstance(override.get("embedder"), dict):
         _reset_contract_for_model_change(base["embedder"], override["embedder"])
@@ -151,15 +142,9 @@ def _deep_merge(base: dict, override: dict, source: str = "", prefix: str = "") 
     for key, val in override.items():
         path = f"{prefix}{key}"
         if source and key not in base and not key.startswith("_"):
-            if path not in _V1_ONLY_KEYS:
-                raise ConfigError(
-                    f"unknown config key {path!r} in {source}: nothing reads it, so it would be "
-                    f"silently ignored. Known keys here: {', '.join(sorted(base)) or '(none)'}")
-            # Say so out loud. An exemption that passes in silence is
-            # indistinguishable, from the operator's chair, from a setting that
-            # is in force — which is the very confusion the refusal exists to end.
-            logger.info("config key %r in %s belongs to v1 (mainframe_mcp); the v2 daemon does not read it",
-                        path, source)
+            raise ConfigError(
+                f"unknown config key {path!r} in {source}: nothing reads it, so it would be "
+                f"silently ignored. Known keys here: {', '.join(sorted(base)) or '(none)'}")
         if key in base and isinstance(base[key], dict) and isinstance(val, dict):
             _deep_merge(base[key], val, source, f"{path}.")
         else:

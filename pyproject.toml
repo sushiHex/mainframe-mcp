@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mainframe-mcp"
 dynamic = ["version"]
-description = "GPU-accelerated semantic knowledge base MCP server for Claude Code and other MCP agents. Local embedding, reranking, contradiction detection, and consolidation on a single GPU."
+description = "GPU-accelerated semantic knowledge base MCP server for Claude Code and other MCP agents. Local embedding, reranking, indexing, and immutable capture on a single GPU."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -15,7 +15,7 @@ dependencies = [
     "sentence-transformers>=5.4.1",
     "transformers>=5.7.0",
     "packaging>=23",
-    # The server uses the 1.x low-level Server decorators; 2.x removes list_tools.
+    # The daemon mounts `mcp.server.fastmcp` from the 1.x line.
     "mcp>=1.0,<2",
     "tantivy>=0.22",
     # Store's projected reads (dedup hash scans, stats) go through
@@ -46,8 +46,7 @@ mainframe-mcp = "mainframe.adapters.mcp_stdio_shim:main"
 mainframe = "mainframe.adapters.cli:main"
 
 [project.optional-dependencies]
-consolidation = ["llama-cpp-python>=0.3"]
-# Opt-in API contextual retrieval at ingest (contextualizer.py).
+# Opt-in API contextual retrieval at ingest (core/contextual.py).
 contextual = ["anthropic>=0.40"]
 # GPU-free test tier: fakes + real LanceDB (torch arrives via sentence-transformers).
 test = ["pytest>=8.0", "numpy"]
@@ -62,4 +61,4 @@ markers = ["slow: real filesystem watchers and timing (deselect with -m 'not slo
 where = ["src"]
 
 [tool.setuptools.dynamic]
-version = {attr = "mainframe_mcp.__version__"}
+version = {attr = "mainframe.__version__"}

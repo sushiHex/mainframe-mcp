@@ -1,4 +1,4 @@
-"""Shared prompt construction and token budgeting for native Qwen rerankers."""
+"""Prompt construction and token budgeting for the native Qwen reranker."""
 
 _WIDEST_VOCAB_SPELLING = "_mainframe_qwen_widest_vocab_spelling"
 _QWEN3_QUERY_CHAR_CLAMP = 1000
