@@ -10,4 +10,5 @@ include eval/README.md eval/program.md eval/results.template.md eval/test_querie
 recursive-include configs *.json
 recursive-include scripts *.py
 recursive-include eval *.py
-recursive-include tests *.py
+recursive-include tests *.py *.md *.json
+recursive-include skills *.md

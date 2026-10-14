@@ -196,8 +196,12 @@ def test_lease_rejects_api_errors_and_releases_only_its_claim(tmp_path):
 def test_output_refuses_git_and_reuse_before_writing(tmp_path):
     from run_trial import prepare_output
 
+    # A worktree of its own, not the checkout's: the suite also runs from an
+    # extracted source archive, which is not a Git worktree.
+    repo = tmp_path / 'repo'
+    subprocess.run(['git', 'init', '-q', str(repo)], check=True)
     with pytest.raises(ValueError, match='outside Git'):
-        prepare_output(EVAL / 'must-not-exist')
+        prepare_output(repo / 'must-not-exist')
     output = prepare_output(tmp_path / 'fresh')
     with pytest.raises(FileExistsError):
         prepare_output(output)
