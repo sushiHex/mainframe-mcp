@@ -5,6 +5,7 @@ include docs/MODEL_COMPARISON.md
 include docs/COMPACT_RERANKERS.md docs/RERANKER_COMPARISON.md
 include docs/RERANKER_CONTEXT.md
 include docs/EMBEDDING_TRIAL.md
+include docs/CAPACITY.md
 include eval/README.md eval/program.md eval/results.template.md eval/test_queries.example.json
 recursive-include configs *.json
 recursive-include scripts *.py
