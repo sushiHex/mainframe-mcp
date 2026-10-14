@@ -98,7 +98,7 @@ model caches outside public Git.
 
 ## Validation and publication
 
-The preview distribution is `2.0.0a2`; `mainframe.__version__` supplies the
+The current prerelease is `2.0.0b1`; `mainframe.__version__` supplies the
 build metadata. Follow
 `docs/PREVIEW_RELEASE.md` for release artifacts, migration, and rollback;
 release preparation produces an audited draft prerelease, not a default switch.
