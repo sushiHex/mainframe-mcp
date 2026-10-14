@@ -325,8 +325,34 @@ def wait_ready(config, http, deadline) -> int:
         time.sleep(START_POLL_SECONDS)
 
 
-def wait_for_lock(config) -> int:
-    """Wait until nothing holds the daemon lock, i.e. the daemon is really gone."""
+def process_exited(pid) -> bool:
+    """True once `pid` has finished. Windows: a SYNCHRONIZE handle that is
+    signalled, or cannot be opened because the process is gone. POSIX: signal 0."""
+    if sys.platform == "win32":
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x00100000, False, pid)        # SYNCHRONIZE
+        if not handle:
+            return True
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == 0     # WAIT_OBJECT_0: it exited
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    return False
+
+
+def wait_for_lock(config, pid=None) -> int:
+    """Wait until the daemon is really gone: nothing holds the lock AND its
+    process (`pid`, from discovery) has exited. The lock alone is not enough -
+    the daemon releases it and then tears down for seconds more, and a logon
+    task whose instance is still running ignores the next start, so an `up`
+    right after a `down` that returned on the lock started nothing."""
     from filelock import FileLock, Timeout
     # The daemon finishes its IN-FLIGHT job before releasing the lock, and
     # that job can be a rescan of thousands of files. Wait for the daemon's
@@ -337,25 +363,34 @@ def wait_for_lock(config) -> int:
         + DOWN_WAIT_MARGIN_SECONDS
     start = time.monotonic()
     next_progress = start + DOWN_PROGRESS_SECONDS
+    released = False
     while time.monotonic() - start < limit:
-        try:
-            with FileLock(str(lock_path(config))).acquire(timeout=0):
-                return 0
-        except Timeout:
-            now = time.monotonic()
-            if now >= next_progress:
-                print("mainframe: waiting for the daemon to finish its current job "
-                      f"({int(now - start)}s elapsed)", file=sys.stderr)
-                next_progress = now + DOWN_PROGRESS_SECONDS
-            time.sleep(0.5)
-    print(f"mainframe: daemon still holds the lock after {int(limit)} s", file=sys.stderr)
+        if not released:
+            try:
+                with FileLock(str(lock_path(config))).acquire(timeout=0):
+                    released = True
+            except Timeout:
+                now = time.monotonic()
+                if now >= next_progress:
+                    print("mainframe: waiting for the daemon to finish its current job "
+                          f"({int(now - start)}s elapsed)", file=sys.stderr)
+                    next_progress = now + DOWN_PROGRESS_SECONDS
+        if released and (pid is None or process_exited(pid)):
+            return 0
+        time.sleep(0.5)
+    if released:
+        print(f"mainframe: the daemon released its lock, but process {pid} is still running "
+              f"after {int(limit)} s", file=sys.stderr)
+    else:
+        print(f"mainframe: daemon still holds the lock after {int(limit)} s", file=sys.stderr)
     return 1
 
 
 def stop_daemon(client, config) -> int:
-    """Ask a RUNNING daemon to stop, and return once it has let go of the lock."""
+    """Ask a RUNNING daemon to stop, and return once it is gone - lock AND process."""
+    pid = (client.info or {}).get("pid")           # read before shutdown withdraws discovery
     rc = _call(lambda: _emit(client.post("/shutdown")))
-    return rc if rc != 0 else wait_for_lock(config)
+    return rc if rc != 0 else wait_for_lock(config, pid)
 
 
 def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
