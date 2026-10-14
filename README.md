@@ -197,6 +197,8 @@ the [compact comparison](docs/COMPACT_RERANKERS.md) for candidate trials,
 tradeoffs, and validation limits, and [embedding comparisons](docs/MODEL_COMPARISON.md)
 for Harrier's measurements.
 
+One daemon serves several agents: on an RTX 3090 a search takes a median of 0.19 s alone and 0.70 s with four agents searching at once, with no errors at eight. See the [measured operating range](docs/CAPACITY.md).
+
 To upgrade an existing installation, use the reranker settings in
 [config.example.json](config.example.json) and restart the daemon. Changing only
 the reranker does **not** require re-embedding your files.
