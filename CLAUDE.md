@@ -46,7 +46,8 @@ python -m pip install -e ".[test]"
 python -m pytest tests/ -q
 python -m pytest tests/v2/test_search.py -q
 python -m pip wheel . --no-deps -w dist
-mainframe serve
+mainframe serve          # supervised: restarts the daemon when it dies; exit 0/3 end it
+mainframe serve --once   # one daemon process, no restarts (what `serve` runs; use when debugging)
 mainframe-mcp
 ```
 
