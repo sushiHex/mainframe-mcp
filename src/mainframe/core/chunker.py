@@ -13,7 +13,14 @@ DEFAULT_CHUNK_TOKENS = 256   # autoresearch optimized (was 512)
 DEFAULT_OVERLAP_RATIO = 0.35  # autoresearch optimized (was 0.25)
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
-CODE_FENCE_RE = re.compile(r"^```", re.MULTILINE)
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+# Bump whenever chunk boundaries or headings change for an UNCHANGED file. The
+# fingerprint cannot carry this (upgrading must never force a rebuild), so the
+# index marker records the revision its rows were chunked under and one rescan
+# re-chunks the files whose rows differ. Revision 1 is everything before the
+# fenced-heading fix.
+CHUNKER_REVISION = 2
 
 
 @dataclass
@@ -39,24 +46,47 @@ def _heading_is_dropped(heading: str, patterns: list) -> bool:
 
 
 def _find_code_blocks(text: str) -> list[tuple[int, int]]:
-    """Return (start, end) char offsets of fenced code blocks."""
+    """Return (start, end) char offsets of fenced code blocks.
+
+    A line-state scan, not a pairing of fence lines: a fence opens with three
+    or more backticks or tildes (indented at most three spaces) and closes only
+    with the same character, at least as many times, and nothing after it but
+    whitespace. So a shorter run, or the other character, inside a block is
+    code, not its end. An unclosed block runs to EOF."""
     blocks = []
-    fences = [m.start() for m in CODE_FENCE_RE.finditer(text)]
-    for i in range(0, len(fences) - 1, 2):
-        # Find end of closing fence line
-        close_end = text.find("\n", fences[i + 1])
-        if close_end == -1:
-            close_end = len(text)
-        blocks.append((fences[i], close_end))
-    # An odd fence count means the last block is unclosed — treat it as running
-    # to EOF so splits don't fall inside it.
-    if len(fences) % 2 == 1:
-        blocks.append((fences[-1], len(text)))
+    open_start = None
+    fence_char = ""
+    fence_len = 0
+    pos = 0
+    for line in text.split("\n"):
+        end = pos + len(line)             # the newline that ends this line, or EOF
+        body = line.rstrip("\r")
+        if open_start is None:
+            m = FENCE_RE.match(body)
+            # A backtick fence's info string cannot hold a backtick (that is inline code).
+            if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+                open_start, fence_char, fence_len = pos, m.group(1)[0], len(m.group(1))
+        else:
+            m = FENCE_RE.match(body)
+            if (m and m.group(1)[0] == fence_char and len(m.group(1)) >= fence_len
+                    and not m.group(2).strip()):
+                blocks.append((open_start, end))
+                open_start = None
+        pos = end + 1
+    if open_start is not None:
+        blocks.append((open_start, len(text)))
     return blocks
 
 
 def _is_inside_code_block(pos: int, code_blocks: list[tuple[int, int]]) -> bool:
     return any(start <= pos <= end for start, end in code_blocks)
+
+
+def _find_headings(text: str, code_blocks: list[tuple[int, int]]) -> list[re.Match]:
+    """Heading matches outside fenced code. A '#' line inside a fence is code (a
+    shell comment): it must neither split the section nor name a chunk that
+    `drop_headings` could then discard."""
+    return [m for m in HEADING_RE.finditer(text) if not _is_inside_code_block(m.start(), code_blocks)]
 
 
 def _split_respecting_code_blocks(
@@ -155,7 +185,7 @@ def chunk_markdown(
     overlap_tokens = int(max_tokens * overlap_ratio)
 
     # Find all headings and their positions
-    headings = list(HEADING_RE.finditer(text))
+    headings = _find_headings(text, code_blocks)
 
     if not headings:
         # No headings — split the whole text
