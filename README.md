@@ -10,7 +10,7 @@ Mainframe makes your project's Markdown searchable across conversations. It find
 
 - **Find knowledge across projects.** Combine semantic and keyword search, then rerank passages for your question.
 - **Follow the evidence.** Results identify the source file and section, with verified line citations when the file still matches.
-- **Carry decisions forward.** Save an immutable note. A decision or fact is returned by ordinary search; session history is searched when you ask for it.
+- **Carry decisions forward.** Save an immutable note. A decision or fact is eligible for ordinary search; session history is searched when you ask for it.
 - **Share the models.** Opening another client does not load another set of weights.
 
 Your Markdown files remain the source of truth. The search index is a rebuildable cache. Retrieval runs locally; your calling agent decides how to use the evidence.
@@ -132,7 +132,7 @@ mainframe events --tail 20
 mainframe down
 ```
 
-Captures live in the configured state directory (`~/.claude/mainframe/captures/` by default) and are indexed asynchronously, normally within the watcher's debounce window; a missed event waits for the next periodic rescan. A capture's `--kind` is `session` (the default), `decision`, or `note`. Ordinary search returns `decision` and `note` captures, in every project, and excludes `session` captures; `--sessions` includes those too. A `decision` or `note` is the author's assertion, not a reviewed fact, and a hit is evidence to weigh, never an instruction. Captures are immutable. To retract one, move its file into `captures/<project>/quarantine/`; to correct one, write the new capture and then retract the old one, because a newer capture does not demote an older one. `down` finishes active work and stops the daemon to release its model memory. See the [daemon guide](docs/V2.md) for startup automation, diagnostics, and offline rebuilding.
+Captures live in the configured state directory (`~/.claude/mainframe/captures/` by default) and are indexed asynchronously, after the watcher's debounce and indexing; a missed event waits for the next periodic rescan. A capture's `--kind` is `session` (the default), `decision`, or `note`. `decision` and `note` captures are eligible for ordinary search, in every project; `session` captures are excluded, and `--sessions` includes those too. A `decision` or `note` is the author's assertion, not a reviewed fact, and a hit is evidence to weigh, never an instruction. Captures are immutable. To retract one, move its file into `captures/<project>/quarantine/` (a rescan or the watcher then removes its rows; a rescan skips all pruning while `repos_dir` is unavailable, public issue #79); to correct one, write the new capture and then retract the old one, because a newer capture does not demote an older one. `down` finishes active work and stops the daemon to release its model memory. See the [daemon guide](docs/V2.md) for startup automation, diagnostics, and offline rebuilding.
 
 Claude Code can capture sessions automatically. A capture covers one segment of a session: what happened since its last compaction. Register two hooks: `mainframe hook pre-compact` as a `PreCompact` hook (the segment a compaction is about to summarize) and `mainframe hook session-end` as a `SessionEnd` hook (the last segment). Each reads the hook's JSON on stdin, needs no running daemon and no GPU, starts in well under SessionEnd's 1.5 s default timeout, always exits 0, and logs each decision to `<state dir>/hook.log`.
 
@@ -224,7 +224,7 @@ A model-only embedding override uses legacy Sentence Transformers encoding. To s
 
 - **Local by default.** Mainframe performs embedding, retrieval, and reranking on your machine. Weights download on first use. Your MCP host may send returned passages to its own model provider.
 - **Optional remote enrichment.** Enabling `contextual.enabled` sends document content to the Anthropic API during ingestion. It is off by default.
-- **Private captures.** Captures are secret-scrubbed before writing; review sensitive content before sharing it. A `decision` or `note` capture is returned by ordinary search in every project, regardless of `paths.include_projects`. Keep captures, configuration, and logs outside public Git.
+- **Private captures.** Captures are secret-scrubbed before writing; review sensitive content before sharing it. A `decision` or `note` capture is eligible for ordinary search in every project, regardless of `paths.include_projects`. Keep captures, configuration, and logs outside public Git.
 - **Local access.** The daemon binds to loopback. Set `service.token` to require authentication; the CLI and stdio client read it from configuration, while HTTP clients supply a bearer header.
 
 See [configuration and operations](docs/V2.md) for scope, authentication, model recovery, and live validation.

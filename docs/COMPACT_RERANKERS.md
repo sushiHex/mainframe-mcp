@@ -10,6 +10,11 @@ candidates, using batch size eight and a 2,048-token joint pair budget unless
 noted below. Results are useful for choosing what to validate; they are not a
 general retrieval benchmark.
 
+Scope note: these comparisons used the pre-publication default pool. From the
+published-captures change on, default search, and therefore `eval/evaluate.py`
+(`include_captures=False`), also admits `decision` and `note` captures, so a
+score can move when such captures are added, independently of code.
+
 ## Completed candidates and contracts
 
 | Candidate | Native scoring contract | Weight license / release gate |

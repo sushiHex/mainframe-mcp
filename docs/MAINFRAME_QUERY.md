@@ -94,10 +94,10 @@ transcript:
 `project` is optional (omitting it uses `_adhoc`); `session_id` and `cwd` are
 optional; `kind` is `session`, `decision`, or `note` and defaults to `session`.
 A `session` capture is opt-in history: search it with `include_sessions: true`.
-A `decision` or `note` is published: ordinary search returns it, in every
+A `decision` or `note` is published: it is eligible for ordinary search, in every
 project, whatever `paths.include_projects` says. Publication is the author's
 assertion, not a review. Use it for a durable decision, constraint, or fact.
-The daemon watcher normally indexes a new capture after its debounce window;
+A new capture becomes searchable after the watcher's debounce and indexing;
 if the event is lost, the next periodic rescan indexes it. `capture.written`
 records that the file was written, not that it is searchable. If the capture
 is not visible when needed, call `maintain` with `{"action":"rescan"}`; the
@@ -105,7 +105,8 @@ same action may take `{"project":"example-project"}` to rescan that project.
 
 Captures are immutable. To retract one, move its file into
 `captures/<project>/quarantine/`; a rescan or the watcher then removes its
-rows. To correct one, write the new capture, then retract the old one. A newer
+rows (a rescan skips all pruning while `repos_dir` is unavailable, public
+issue #79). To correct one, write the new capture, then retract the old one. A newer
 capture does not demote an older one, so an unretracted old decision can still
 be returned beside its correction.
 

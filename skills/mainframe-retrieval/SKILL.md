@@ -83,7 +83,7 @@ One topic per query. Two focused searches beat one broad one.
 Capture a durable note (via `capture_memory`, or your host's capture flow) when
 you reach a **hard-won, reusable conclusion**: a gotcha, a measured result, a
 design decision with rationale. Use `kind=decision` or `kind=note` for those:
-ordinary search returns them, so write only what you would stand behind. To
+they are eligible for ordinary search, so write only what you would stand behind. To
 correct one, write the new capture, then retract the old one by moving it into
 `captures/<project>/quarantine/`. Do NOT capture: routine task chatter,
 speculation, secrets, or anything that changes daily. Files are the source of

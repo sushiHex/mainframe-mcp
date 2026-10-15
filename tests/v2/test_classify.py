@@ -1,6 +1,6 @@
 import pytest
 
-from mainframe.core.classify import (CAPTURE_LANE, KNOWLEDGE_LANE, PUBLISHED_KINDS,
+from mainframe.core.classify import (CAPTURE_LANE, KIND_HEAD, KNOWLEDGE_LANE, PUBLISHED_KINDS,
                                      ROOT_CONTEXT_FILES, classify_source_type,
                                      declared_kind, declared_kind_of)
 
@@ -50,6 +50,29 @@ def test_one_rule_for_text_and_file(tmp_path):
     p.write_text(long, encoding="utf-8")
     assert declared_kind_of(p) == "session"
     assert declared_kind_of(tmp_path / "missing.md") == "session"
+
+
+def test_the_header_bound_counts_characters_not_bytes(tmp_path):
+    # ~5,000 bytes but ~2,550 characters: the fence closes inside KIND_HEAD in characters.
+    text = "---\npad: " + "é" * 2500 + "\ntype: decision\n---\nbody\n"
+    assert len(text) < KIND_HEAD < len(text.encode("utf-8"))
+    p = tmp_path / "c.md"
+    p.write_bytes(text.encode("utf-8"))
+    assert declared_kind(text) == "decision"
+    assert declared_kind_of(p) == "decision"
+
+
+def test_the_header_bound_is_measured_after_crlf_normalization(tmp_path):
+    # LF form closes at KIND_HEAD - 20 characters; CRLF adds one byte per line, past KIND_HEAD raw.
+    lines = ["pad%d: %s" % (i, "x" * 60) for i in range(60)]
+    lf = "---\n" + "\n".join(lines) + "\ntype: decision\n---\nbody\n"
+    lf_close = lf.index("\n---\n") + 5
+    assert lf_close < KIND_HEAD
+    crlf = lf.replace("\n", "\r\n")
+    assert crlf.index("\r\n---\r\n") + 7 > KIND_HEAD                  # raw characters would cut the fence
+    p = tmp_path / "c.md"
+    p.write_bytes(crlf.encode("utf-8"))
+    assert declared_kind(crlf) == "decision" == declared_kind_of(p)
 
 
 def test_a_capture_row_takes_its_kind_and_knowledge_ignores_it():

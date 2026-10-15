@@ -498,10 +498,11 @@ class Store:
         rescan re-reads for a published kind. RAISES on a failed scan, like
         `ledger`."""
         tbl = self.table
-        if tbl is None or tbl.count_rows() == 0:
+        if tbl is None:
             return []
-        df = self._scan(["doc_path", "lane", "source_type"], table=tbl)
-        return sorted(set(df[(df["lane"] == CAPTURE_LANE) & (df["source_type"] == "session")]["doc_path"]))
+        rows = tbl.to_lance().to_table(columns=["doc_path"],
+                                       filter=f"lane = '{CAPTURE_LANE}' AND source_type = 'session'")
+        return sorted(set(rows.column("doc_path").to_pylist()))
 
     def search(self, query_embedding, top_k: int = 20, include_captures: bool = False,
                query_text: str = "") -> list:
