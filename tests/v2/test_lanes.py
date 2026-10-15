@@ -1,4 +1,3 @@
-import json
 import os
 from pathlib import Path
 
@@ -6,8 +5,7 @@ import pytest
 
 from mainframe.core.paths import canonical
 from mainframe.memory.frontmatter import render
-from mainframe.memory.lanes import (ADHOC_PROJECT, AGENT_DIRS, Lanes, capture_id_of,
-                                    load_receipts, save_receipts)
+from mainframe.memory.lanes import ADHOC_PROJECT, AGENT_DIRS, Lanes, capture_id_of
 from v2.helpers import write_md
 
 
@@ -100,32 +98,8 @@ def test_capture_id_resolves_from_head_without_a_full_read(tmp_path, monkeypatch
         capture_id_of(write_md(tmp_path / "legacy2.md", "# S\nbody\n"))
 
 
-def test_receipts_roundtrip_and_pending(cfg):
-    L = Lanes(cfg)
-    d = L.capture_dir("proj")
-    c1 = write_md(d / "2026-01-01-000000-s1-c1.md", render({"capture_id": "c1"}) + "# one\n")
-    c2 = write_md(d / "2026-01-02-000000-s2-c2.md", render({"capture_id": "c2"}) + "# two\n")
-    assert [Path(f.path).name for f in L.pending("proj")] == [c1.name, c2.name]
-    save_receipts(L.note_receipts_path("proj", "proj"), {"c1"}, {"generated_at": "t"})
-    assert load_receipts(L.note_receipts_path("proj", "proj")) == {"c1"}
-    assert [Path(f.path).name for f in L.pending("proj")] == [c2.name]
-    # draft receipts never define pending
-    save_receipts(L.draft_receipts_path("proj", "proj"), {"c2"}, {})
-    assert [Path(f.path).name for f in L.pending("proj")] == [c2.name]
-    assert json.loads(L.note_receipts_path("proj", "proj").read_text())["capture_ids"] == ["c1"]
-
-
-def test_load_receipts_tolerates_non_object_json(tmp_path):
-    p = write_md(tmp_path / "bad.json", "[1, 2, 3]")
-    assert load_receipts(p) == set()
-    p2 = write_md(tmp_path / "bad2.json", "\"just a string\"")
-    assert load_receipts(p2) == set()
-
-
 def test_paths_are_inside_lanes(cfg):
     L = Lanes(cfg)
-    assert str(L.note_path("proj", "proj")).replace("\\", "/").endswith("/repos/proj/research/memory/proj.md")
-    assert str(L.draft_path("proj", "proj")).replace("\\", "/").endswith("/mainframe/drafts/proj/proj.md")
     assert str(L.capture_dir("proj")).replace("\\", "/").endswith("/mainframe/captures/proj")
 
 
@@ -134,8 +108,6 @@ def test_unsafe_project_or_slug_is_rejected(cfg):
     for bad in ("../evil", "C:/evil", "a/b", ".hidden", "", "_other"):
         with pytest.raises(ValueError):
             L.capture_dir(bad)
-        with pytest.raises(ValueError):
-            L.note_path("proj", bad)
     assert L.capture_dir(ADHOC_PROJECT).name == ADHOC_PROJECT   # _adhoc stays valid
 
 
@@ -144,14 +116,6 @@ def test_capture_files_validates_explicit_project(cfg):
     for bad in ("../evil", "C:/evil", "a/b", ".hidden", ""):
         with pytest.raises(ValueError):
             L.capture_files(bad)
-
-
-def test_pending_skips_unreadable_capture(cfg):
-    L = Lanes(cfg)
-    d = L.capture_dir("proj")
-    good = write_md(d / "2026-01-01-000000-s1-c1.md", render({"capture_id": "c1"}) + "# one\n")
-    (d / "2026-01-02-000000-s2-c2.md").mkdir()   # a directory named like a capture: unreadable as a file
-    assert [Path(f.path).name for f in L.pending("proj")] == [good.name]
 
 
 def test_an_agents_working_tree_is_not_the_projects_knowledge(cfg):
@@ -445,8 +409,8 @@ def test_dir_matters_bounds_the_rescan_trigger(cfg):
     assert L.dir_matters(repos / "proj" / "research" / "sessions" / "deep") is False
     assert L.dir_matters(mf / "captures") is True
     assert L.dir_matters(mf / "captures" / "proj") is True
-    # the capture lane is flat: quarantine/ and overflow/ are neither indexed
-    # nor pending, so nothing below <project> can change what a rescan sees
+    # the capture lane is flat: quarantine/ and overflow/ are not
+    # indexed, so nothing below <project> can change what a rescan sees
     assert L.dir_matters(mf / "captures" / "proj" / "quarantine") is False
     assert L.dir_matters(mf / "captures" / "proj" / "overflow") is False
     assert L.dir_matters(mf) is False
