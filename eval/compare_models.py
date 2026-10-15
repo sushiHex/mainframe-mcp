@@ -138,7 +138,7 @@ def experimental_factories(native_embedder: bool, bf16_reranker: bool, *, query_
                            trust_remote_code=False):
     import torch
     from sentence_transformers import CrossEncoder, SentenceTransformer
-    from mainframe.core.embedder import Embedder
+    from mainframe.core.embedder import Embedder, _embedding_dimension
     from mainframe.core.reranker import Reranker
 
     class NativeEmbedder(Embedder):
@@ -151,8 +151,7 @@ def experimental_factories(native_embedder: bool, bf16_reranker: bool, *, query_
                 model_name, cache_folder=str(cache_dir), device=device,
                 trust_remote_code=trust_remote_code,
                 model_kwargs={"dtype": torch.bfloat16, "attn_implementation": "sdpa"})
-            self.dimension = (getattr(self.model, "get_embedding_dimension", None)
-                              or self.model.get_sentence_embedding_dimension)()
+            self.dimension = _embedding_dimension(self.model)
             if gate is not None:
                 # ST invokes its root forward directly; ST 5.4 also invokes the
                 # HF forward directly. Its enclosing Transformer module is the
