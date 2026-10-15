@@ -17,7 +17,7 @@ KINDS = ("session", "decision", "note")
 
 def write_capture(lanes, content: str, title: str, project, session_id: str = "", kind: str = "session",
                   captured_by: str = "capture_memory", cwd: str = "", branch: str = "", reason: str = "",
-                  now: datetime | None = None) -> Path:
+                  through: str = "", now: datetime | None = None) -> Path:
     if kind not in KINDS:
         raise ValueError(f"unknown capture kind {kind!r}; expected one of {KINDS}")
     now = now or datetime.now()
@@ -31,5 +31,7 @@ def write_capture(lanes, content: str, title: str, project, session_id: str = ""
     cid = content_hash(body)[:16]
     fm = render({"type": kind, "project": proj, "capture_id": cid, "session_id": sid, "reason": scrub_secrets(reason),
                  "date": date, "time": hhmmss, "cwd": scrub_secrets(cwd), "git_branch": scrub_secrets(branch),
-                 "captured_by": scrub_secrets(captured_by)})
+                 "captured_by": scrub_secrets(captured_by),
+                 # The hook's resume point: the last transcript record this capture covers.
+                 **({"through": re.sub(r"[^A-Za-z0-9-]", "", through)} if through else {})})
     return create_exclusive(target, f"{date}-{hhmmss}-{sid}-{cid[:8]}", text=fm + body)

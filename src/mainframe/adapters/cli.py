@@ -498,9 +498,10 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
     c = sub.add_parser("capture"); c.add_argument("--file", required=True); c.add_argument("--project", required=True)
     c.add_argument("--title"); c.add_argument("--session-id", default="")
     h = sub.add_parser("hook", help="agent-host hook entry points (event JSON on stdin; always exits 0)")
-    hooks = h.add_subparsers(dest="event", required=True)
-    hooks.add_parser("session-end", help="Claude Code SessionEnd: capture the session's last segment")
-    hooks.add_parser("pre-compact", help="Claude Code PreCompact: capture the segment about to be compacted")
+    # A free-form name, not subcommands: argparse exits 2 on an unknown
+    # choice, and a PreCompact hook that exits 2 blocks the compaction.
+    h.add_argument("event", nargs="?", default="session-end",
+                   help="session-end (Claude Code SessionEnd) or pre-compact (PreCompact); only labels hook.log")
     v = sub.add_parser("validate", help="run live synthetic smoke/soak checks in new state outside Git")
     v.add_argument("--output", required=True, help="new directory outside Git for state, credentials, and reports")
     v.add_argument("--duration", type=float, default=0, help="observation seconds; 0 runs smoke checks and restart")

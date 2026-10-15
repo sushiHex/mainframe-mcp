@@ -1,12 +1,13 @@
 """The capture hooks: gate branches, project derivation, body shape, dedup
 against the agent's own capture, and silence with no daemon anywhere."""
 import io
+import itertools
 import json
 import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -20,8 +21,11 @@ SID = "0123456789abcdef-session"
 NOW = datetime(2026, 10, 14, 9, 30, 0)
 
 
+_UUIDS = itertools.count(1)
+
+
 def _msg(role, blocks, **top):
-    return {"type": role, "isSidechain": False, "sessionId": SID, "gitBranch": "main",
+    return {"type": role, "uuid": f"r-{next(_UUIDS)}", "isSidechain": False, "sessionId": SID, "gitBranch": "main",
             "message": {"role": role, "content": blocks}, **top}
 
 
@@ -125,12 +129,17 @@ def test_skips_when_the_agent_captured_this_session_itself(cfg, repo, tmp_path):
     t = REAL + [assistant("saving", tool="mcp__mainframe__capture", isSidechain=True)]
     r = se.capture_segment(cfg, event(tmp_path, t, str(repo)), now=NOW)
     assert r["reason"] == "the agent captured this segment itself"
-    # (b) a capture carrying this session id already exists, in ANY project
+    # (b) an earlier capture of this session WITHOUT `through` (the agent's own MCP capture) blocks nothing
     other = Lanes(cfg).capture_dir("other")
     other.mkdir(parents=True)
     (other / "2026-10-13-120000-01234567-deadbeef.md").write_text("x", encoding="utf-8")
     r = se.capture_segment(cfg, event(tmp_path, REAL, str(repo)), now=NOW)
-    assert r["reason"] == "a capture for this segment exists"
+    assert r["decision"] == "written"
+    assert split(Path(r["path"]).read_text(encoding="utf-8"))[0]["through"] == REAL[-1]["uuid"]
+    # (c) a capture whose `through` is the transcript's last record: the rerun has nothing new
+    r = se.capture_segment(cfg, event(tmp_path, REAL, str(repo)), now=NOW)
+    assert r["decision"] == "skip" and r["reason"].startswith(("low signal", "nothing extractable"))
+    assert len(list(Lanes(cfg).capture_dir("proj").glob("*.md"))) == 1
     # a screenshot tool named capture is not ours
     t = REAL + [assistant("shot", tool="mcp__playwright__capture")]
     assert se.capture_segment(cfg, event(tmp_path, t, str(repo), session_id="fresh"), now=NOW)["decision"] == "written"
@@ -153,8 +162,8 @@ def test_oversize_transcript_reads_head_and_tail_and_fails_open(cfg, repo, tmp_p
     cfg["capture"]["max_transcript_bytes"] = 4096
     filler = [assistant("x" * 200) for _ in range(40)]        # ~10 KB, one prompt, no tool use
     t = [user("The task line")] + filler + [assistant("Final outcome api_key=hunter2secret")]
-    lines, bounded, began = se.read_transcript(transcript(tmp_path, t), 4096)
-    assert bounded and began == "" and all(json.loads(line) for line in lines)   # no torn line at either seam
+    lines, bounded = se.read_transcript(transcript(tmp_path, t), 4096)
+    assert bounded and all(json.loads(line) for line in lines)   # no torn line at either seam
     r = se.capture_segment(cfg, event(tmp_path, t, str(repo)), now=NOW)
     assert r["decision"] == "written"                               # counters unknown: never skip
     body = split(Path(r["path"]).read_text(encoding="utf-8"))[1]
@@ -192,12 +201,7 @@ SUMMARY = "This session is being continued from a previous conversation..."
 
 def boundary(ts=BOUNDARY_TS, **top):
     return {"type": "system", "subtype": "compact_boundary", "content": "Conversation compacted",
-            "timestamp": ts, "uuid": "u-1", **top}
-
-
-def _local_stamp(ts, minutes):
-    return (datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
-            + timedelta(minutes=minutes)).strftime("%Y-%m-%d-%H%M%S")
+            "timestamp": ts, "uuid": f"b-{next(_UUIDS)}", **top}
 
 
 def test_task_comes_from_the_current_segment_not_the_compacted_past(cfg, repo, tmp_path):
@@ -230,16 +234,69 @@ def test_pre_compact_event_records_the_trigger_as_the_reason(cfg, repo, tmp_path
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d pre-compact written project=proj .*", line)
 
 
-@pytest.mark.parametrize("minutes, decision", [(-1, "written"), (1, "skip")])
-def test_dedup_is_per_segment_by_boundary_time(cfg, repo, tmp_path, minutes, decision):
-    t = [user("old"), boundary(), user("the new task"), assistant("done", tool="Edit")]
-    d = Lanes(cfg).capture_dir("proj")
-    d.mkdir(parents=True)
-    (d / f"{_local_stamp(BOUNDARY_TS, minutes)}-01234567-deadbeef.md").write_text("x", encoding="utf-8")
-    r = se.capture_segment(cfg, event(tmp_path, t, str(repo)), now=NOW)
-    assert r["decision"] == decision
-    if decision == "skip":
-        assert r["reason"] == "a capture for this segment exists"
+def _fields_body(r):
+    return split(Path(r["path"]).read_text(encoding="utf-8"))
+
+
+def _files(cfg):
+    return list((Lanes(cfg).mainframe_dir / "captures").rglob("*.md"))
+
+
+def test_resume_after_a_capture_starts_after_its_through_record(cfg, repo, tmp_path):
+    t = [user("first task"), assistant("working", tool="Bash")]
+    a = se.capture_segment(cfg, event(tmp_path, t, str(repo)), now=NOW)
+    assert a["decision"] == "written" and _fields_body(a)[0]["through"] == t[-1]["uuid"]
+    t += [user("second task"), assistant("more", tool="Edit")]          # no boundary: a resumed session
+    b = se.capture_segment(cfg, event(tmp_path, t, str(repo)), now=NOW)
+    fields, body = _fields_body(b)
+    assert b["decision"] == "written" and b["path"] != a["path"] and fields["through"] == t[-1]["uuid"]
+    assert "Task: second task" in body and "first task" not in body
+    assert se.capture_segment(cfg, event(tmp_path, t, str(repo)), now=NOW)["decision"] == "skip"
+    assert len(_files(cfg)) == 2
+
+
+def test_a_failed_compaction_loses_nothing_and_repeats_nothing(cfg, repo, tmp_path):
+    def pre_compact(t):
+        ev = event(tmp_path, t, str(repo))
+        del ev["reason"]
+        ev.update(hook_event_name="PreCompact", trigger="auto")
+        return se.capture_segment(cfg, ev, now=NOW)
+    t = [user("before compaction"), assistant("working", tool="Bash")]
+    assert pre_compact(t)["decision"] == "written"
+    t += [user("work after the failed compaction"), assistant("more", tool="Edit")]   # no boundary landed
+    r = pre_compact(t)
+    body = _fields_body(r)[1]
+    assert r["decision"] == "written" and "Task: work after the failed compaction" in body
+    assert "before compaction" not in body
+
+
+def test_a_through_in_an_overflow_capture_is_honoured_too(cfg, repo, tmp_path):
+    cfg["capture"]["daily_cap"] = 0                                     # every capture diverts to overflow/
+    t = [user("first task"), assistant("working", tool="Bash")]
+    a = se.capture_segment(cfg, event(tmp_path, t, str(repo)), now=NOW)
+    assert a["decision"] == "overflow" and Path(a["path"]).parent == Lanes(cfg).overflow_dir("proj")
+    assert se.capture_segment(cfg, event(tmp_path, t, str(repo)), now=NOW)["decision"] == "skip"
+    t += [user("second task"), assistant("more", tool="Edit")]
+    b = se.capture_segment(cfg, event(tmp_path, t, str(repo)), now=NOW)
+    body = _fields_body(b)[1]
+    assert b["decision"] == "overflow" and "Task: second task" in body and "first task" not in body
+
+
+def test_meta_and_transcript_only_records_are_not_prompts(cfg, repo, tmp_path):
+    caveat = "Caveat: The messages below were generated by the user while running local commands."
+    t = [user(caveat, isMeta=True), user("shown only in the transcript", isVisibleInTranscriptOnly=True),
+         user("the real task"), assistant("done", tool="Bash")]
+    parsed = se.parse([json.dumps(e) for e in t])
+    assert parsed["prompts"] == 1 and parsed["users"] == ["the real task"]
+    body = _fields_body(se.capture_segment(cfg, event(tmp_path, t, str(repo)), now=NOW))[1]
+    assert "Task: the real task" in body and "Caveat" not in body and "transcript" not in body
+
+
+def test_cli_hook_takes_any_event_label_and_still_exits_zero(cfg, repo, tmp_path, monkeypatch):
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(event(tmp_path, REAL, str(repo)))))
+    assert cli.main(["hook", "no-such-event"], config=cfg) == 0
+    assert len(list(Lanes(cfg).capture_dir("proj").glob("*.md"))) == 1
+    assert " no-such-event written project=proj" in (tmp_path / "mainframe" / "hook.log").read_text(encoding="utf-8")
 
 
 def _segment_file(tmp_path, pad, long_boundary):
@@ -261,7 +318,7 @@ def test_segment_start_finds_the_boundary_wherever_it_falls_in_a_block(tmp_path,
     for pad in range(70):
         p, expected = _segment_file(tmp_path, pad, long_boundary)
         with p.open("rb") as f:
-            assert se.segment_start(f, p.stat().st_size) == (expected, BOUNDARY_TS), pad
+            assert se.segment_start(f, p.stat().st_size) == expected, pad
 
 
 def test_segment_start_ignores_decoys_and_returns_zero_without_a_boundary(tmp_path, monkeypatch):
@@ -271,18 +328,57 @@ def test_segment_start_ignores_decoys_and_returns_zero_without_a_boundary(tmp_pa
     p = tmp_path / "none.jsonl"
     p.write_text("\n".join(json.dumps(e, separators=(",", ":")) for e in lines) + "\n", encoding="utf-8")
     with p.open("rb") as f:
-        assert se.segment_start(f, p.stat().st_size) == (0, "")
+        assert se.segment_start(f, p.stat().st_size) == 0
     p.write_bytes(b"")
     with p.open("rb") as f:
-        assert se.segment_start(f, 0) == (0, "")
+        assert se.segment_start(f, 0) == 0
+
+
+def _offsets(tmp_path, recs, **dumps):
+    """Write `recs` as JSONL; return the path and the offset just past each line."""
+    lines = [(json.dumps(r, **dumps) + "\n").encode() for r in recs]
+    p = tmp_path / "off.jsonl"
+    p.write_bytes(b"".join(lines))
+    return p, list(itertools.accumulate(len(x) for x in lines))
+
+
+def _start(p, through=frozenset()):
+    with p.open("rb") as f:
+        return se.segment_start(f, p.stat().st_size, through)
+
+
+def test_segment_start_finds_a_boundary_serialized_with_spaces(tmp_path, monkeypatch):
+    monkeypatch.setattr(se, "SCAN_BYTES", 64)
+    for pad in range(0, 70, 7):
+        p, ends = _offsets(tmp_path, [user("x" * pad), boundary(), user("tail"), assistant("L" * 300)])
+        assert b'"subtype": "compact_boundary"' in p.read_bytes() and _start(p) == ends[1], pad
+
+
+def test_segment_start_through_matches_a_record_uuid_not_quoted_text(tmp_path, monkeypatch):
+    monkeypatch.setattr(se, "SCAN_BYTES", 64)
+    quoted = user('see {"uuid":"zz-target"} and "uuid" : "zz-target"')
+    p, ends = _offsets(tmp_path, [user("first"), quoted, assistant("L" * 300), user("last")])
+    assert _start(p, frozenset({"zz-target"})) == 0
+    p, ends = _offsets(tmp_path, [user("first"), assistant("hit", uuid="zz-target"), quoted, user("last")])
+    assert _start(p, frozenset({"zz-target"})) == ends[1]
+
+
+def test_segment_start_the_later_of_boundary_and_through_wins(tmp_path, monkeypatch):
+    monkeypatch.setattr(se, "SCAN_BYTES", 64)
+    through = frozenset({"zz-target"})
+    hit = assistant("hit", uuid="zz-target")
+    p, ends = _offsets(tmp_path, [user("a"), boundary(), user("b"), hit, user("c")])
+    assert _start(p, through) == ends[3]
+    p, ends = _offsets(tmp_path, [user("a"), hit, user("b"), boundary(), user("c")])
+    assert _start(p, through) == ends[3]
 
 
 def test_oversize_segment_is_bounded_from_the_segment_head_not_the_file_head(tmp_path, monkeypatch):
     monkeypatch.setattr(se, "SCAN_BYTES", 64)
     t = [user("ancient prompt"), boundary(), user("segment first prompt")] + \
         [assistant("x" * 200) for _ in range(40)] + [assistant("Final outcome")]
-    lines, bounded, began = se.read_transcript(transcript(tmp_path, t), 4096)
-    assert bounded and began == BOUNDARY_TS
+    lines, bounded = se.read_transcript(transcript(tmp_path, t), 4096)
+    assert bounded
     assert "segment first prompt" in lines[0] and "Final outcome" in lines[-1]
     assert not any("ancient" in line or "compact_boundary" in line for line in lines)
     assert all(json.loads(line) for line in lines)
