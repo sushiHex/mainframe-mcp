@@ -89,6 +89,55 @@ def test_capture_lane_is_scrubbed_and_typed_session(tmp_path, fake_embedder):
     assert "example-body" not in d.rows[0]["text"] and "[REDACTED]" in d.rows[0]["text"]
 
 
+_FM = "---\ntype: {t}\nproject: p\ncapture_id: abc\n---\n# T\n\n## Summary\nbody text with enough words to stand alone here.\n"
+
+
+def _capture_rows(path, fake_embedder, **kw):
+    return prepare_document(LaneFile(canonical(path), "capture", "p"), CHUNK, fake_embedder.embed, **kw)
+
+
+def test_capture_rows_carry_a_published_kind(tmp_path, fake_embedder):
+    for kind in ("decision", "note"):
+        p = write_md(tmp_path / f"{kind}.md", _FM.format(t=kind))
+        rows = _capture_rows(p, fake_embedder).rows
+        assert rows and {r["source_type"] for r in rows} == {kind}
+    p = write_md(tmp_path / "other.md", _FM.format(t="brand-new-kind"))
+    assert {r["source_type"] for r in _capture_rows(p, fake_embedder).rows} == {"session"}
+
+
+def test_the_kind_is_read_before_the_scrub_can_consume_the_fence(tmp_path, fake_embedder):
+    # Split so the fixture is not key-shaped for the secret scanners.
+    begin, end = "-----BEGIN RSA " + "PRIVATE KEY-----", "-----END RSA " + "PRIVATE KEY-----"
+    text = f"---\ntype: decision\nreason: {begin}\nproject: p\n---\n# T\n\n## Summary\nbody {end} tail text here.\n"
+    p = write_md(tmp_path / "x.md", text)
+    rows = _capture_rows(p, fake_embedder).rows
+    assert rows and {r["source_type"] for r in rows} == {"decision"}
+    joined = "\n".join(r["text"] for r in rows)
+    assert begin not in joined and "[REDACTED]" in joined
+
+
+def test_an_edit_reclassifies_the_capture(tmp_path, fake_embedder):
+    p = write_md(tmp_path / "c.md", _FM.format(t="session"))
+    first = _capture_rows(p, fake_embedder)
+    assert {r["source_type"] for r in first.rows} == {"session"}
+    write_md(p, _FM.format(t="decision"))
+    second = _capture_rows(p, fake_embedder, known_hash=first.rows[0]["file_hash"])
+    assert second is not UNCHANGED and {r["source_type"] for r in second.rows} == {"decision"}
+
+
+def test_publication_ignores_project_scope(tmp_path, cfg, fake_embedder):
+    """A kinded capture is a deliberate act: capture indexing never consults
+    `in_scope` (pin), and classification follows the declared kind regardless."""
+    from mainframe.memory.lanes import Lanes
+    cfg["paths"]["include_projects"] = ["other"]
+    lanes = Lanes(cfg)
+    p = write_md(lanes.capture_dir("p") / "2026-01-01-000000-ab12cd34-ef56ab78.md", _FM.format(t="decision"))
+    files = lanes.capture_files()
+    assert [f.path for f in files] == [canonical(p)]                       # pin: still enumerated
+    rows = prepare_document(files[0], CHUNK, fake_embedder.embed).rows
+    assert rows and {r["source_type"] for r in rows} == {"decision"}
+
+
 def test_contextualizer_prefix_applied(tmp_path, fake_embedder):
     class Ctx:
         enabled = True
