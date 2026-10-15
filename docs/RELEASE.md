@@ -1,10 +1,37 @@
-# 2.0.0b1
+# 2.0.0
 
-**2.0.0b1** is the v2 daemon with the v1 server removed: Harrier 0.6B native
-(1024-dim) embedding and Qwen3-Reranker-0.6B, unchanged from 2.0.0a2, so an
-a2 index is reused as is — no rebuild.
+**2.0.0** is the v2 daemon with the v1 server removed: Harrier 0.6B native
+(1024-dim) embedding and Qwen3-Reranker-0.6B, unchanged from 2.0.0a2 and
+2.0.0b1, so an a2 or b1 index is reused as is — no rebuild.
 
-## Changes since 2.0.0a2
+## Changes since 2.0.0b1
+
+- **Capture hook: one capture per session segment.** A capture covers the
+  transcript after the last compaction. `mainframe hook pre-compact` captures
+  the segment a compaction is about to summarize; `mainframe hook session-end`
+  captures the last segment. Each capture records `through`, the last
+  transcript record it covered, so the next one resumes exactly there:
+  nothing is captured twice and nothing is skipped. The compaction summary and
+  local-command preambles no longer count as prompts. The hook starts in 0.4 s
+  (it was 3.1 s), inside SessionEnd's 1.5 s default timeout (#66).
+- **`daemon.out` holds what a crash says.** Every log line was written twice
+  and the file filled with per-request and protocol-probe noise under
+  `pythonw`; duplicate lines, the access log, and the `server/discover`
+  validation dumps are gone (#71).
+- **Embedder:** the sentence-transformers dimension lookup uses
+  `get_embedding_dimension`, not the deprecated name (#73).
+- **Validation records why a search was invalid:** the returned and resolved
+  paths and the scope roots they were compared against, so an intermittent
+  "load phase returned invalid results" can be diagnosed (#77).
+
+**Upgrading from 2.0.0b1:** no configuration key was removed or added, and the
+models and index fingerprint are unchanged, so there is no rebuild. The capture
+hooks changed, so re-register them as the [README](../README.md) shows: one
+`PreCompact` hook (`mainframe hook pre-compact`) and one `SessionEnd` hook
+(`mainframe hook session-end`). Hook `timeout` values are in seconds.
+Restart the daemon (`mainframe down`, then `mainframe up`) after installing.
+
+## Changes in 2.0.0b1, since 2.0.0a2
 
 - **Readiness and startup.** `/healthz` and `status` report `readiness`
   (`ready`, `warming`, `idle`, `blocked` with its remedy); `service.prewarm`
@@ -47,7 +74,7 @@ remains available for reference and rollback.
 The v1 column describes the `v2.0.0a1` artifact; the v1 server has since been
 [removed from the source](#v1-removal).
 
-| Capability | v1 server (`v2.0.0a1`) | v2 preview |
+| Capability | v1 server (`v2.0.0a1`) | v2 |
 |---|---|---|
 | Semantic search (keyword backstop) and native reranking | Yes | Yes |
 | Immutable captures, indexing, search | Yes | Yes |
@@ -63,24 +90,24 @@ v2 excludes captures from search unless sessions are requested. See the
 ## Install an audited artifact
 
 Download the wheel and `SHA256SUMS` from the [releases page](https://github.com/sushiHex/mainframe-mcp/releases)
-for the version you intend to install: `v2.0.0b1` is the current build;
+for the version you intend to install: `v2.0.0` is the current release; `v2.0.0b1` was the last beta;
 `v2.0.0a1` is the historical Qwen build. Verify the wheel hash against that
 manifest before installation:
 
 ```powershell
-Get-FileHash ./mainframe_mcp-2.0.0b1-py3-none-any.whl -Algorithm SHA256
+Get-FileHash ./mainframe_mcp-2.0.0-py3-none-any.whl -Algorithm SHA256
 ```
 
 On Linux, use `sha256sum -c SHA256SUMS` with both distribution files present.
 The manifest detects a mismatched download; it is not a signature.
 
 ```bash
-python -m venv .venv-preview
-# PowerShell: ./.venv-preview/Scripts/Activate.ps1
-# POSIX: source .venv-preview/bin/activate
+python -m venv .venv-mainframe
+# PowerShell: ./.venv-mainframe/Scripts/Activate.ps1
+# POSIX: source .venv-mainframe/bin/activate
 python -m pip install --upgrade pip
 # Install CUDA-enabled PyTorch using the selector linked below, then:
-python -m pip install ./mainframe_mcp-2.0.0b1-py3-none-any.whl
+python -m pip install ./mainframe_mcp-2.0.0-py3-none-any.whl
 mainframe --help
 ```
 
@@ -100,7 +127,7 @@ before loading them and check [Windows startup memory](V2.md#startup-memory-diag
    Select the intended `paths.mainframe_dir` and an explicit `paths.include_projects` list;
    an empty include list selects all eligible projects. Set `service.token` on
    shared machines. Point `MAINFRAME_CONFIG` at this file in every v2 shell/client.
-3. Run `mainframe validate --output ~/mainframe-validation/preview-01` before
+3. Run `mainframe validate --output ~/mainframe-validation/release-01` before
    production indexing. It uses synthetic files and its own state. For a soak,
    add `--duration 1800`. Keep the generated token, logs, and report private.
 4. Start `mainframe serve`, check `mainframe status`, and search the selected
@@ -139,9 +166,9 @@ Build from a clean, reviewed public commit, with output outside the checkout:
 
 ```bash
 python -m pip install build twine
-python -m build --outdir ../mainframe-preview-dist
-python -m twine check ../mainframe-preview-dist/*
-python scripts/check_install.py --wheel-dir ../mainframe-preview-dist
+python -m build --outdir ../mainframe-dist
+python -m twine check ../mainframe-dist/*
+python scripts/check_install.py --wheel-dir ../mainframe-dist
 ```
 
 `python -m build` builds the wheel from its generated source distribution.
@@ -157,6 +184,6 @@ commit ancestry, source tree, release text, and every extracted artifact file
 and metadata record. Scan archives and extracted contents, inspect the file
 inventory, and record hashes in `SHA256SUMS`. Record the build commit, tool
 versions, checks, and live-validation scope in the release notes. Keep raw
-logs and private corpora outside the publication. Prepare a **draft prerelease**;
+logs and private corpora outside the publication. Prepare a **draft release** (a prerelease only for a pre-release version);
 publishing release artifacts requires a maintainer decision. Harrier default
 promotion on public main is separate from the original tagged artifact.

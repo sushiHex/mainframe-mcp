@@ -98,10 +98,10 @@ model caches outside public Git.
 
 ## Validation and publication
 
-The current prerelease is `2.0.0b1`; `mainframe.__version__` supplies the
+The current release is `2.0.0`; `mainframe.__version__` supplies the
 build metadata. Follow
-`docs/PREVIEW_RELEASE.md` for release artifacts, migration, and rollback;
-release preparation produces an audited draft prerelease, not a default switch.
+`docs/RELEASE.md` for release artifacts, migration, and rollback;
+release preparation produces an audited draft release, not a default switch.
 
 Tests use deterministic fake models and temporary LanceDB stores; they must
 not download models or require CUDA. Real watcher timing tests use `slow` and
