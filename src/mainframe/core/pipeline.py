@@ -130,8 +130,10 @@ class IndexPipeline:
                            "so an absent root cannot wipe the index")
             vanished = []
         elif project is not None:
-            prefix = canonical(self.lanes.repos_dir / project) + "/"
-            vanished = [p for p in known if p.startswith(prefix) and self.lanes.resolve(p) is None]
+            # The project's captures too: a retracted one (moved into quarantine/) no longer resolves.
+            prefixes = (canonical(self.lanes.repos_dir / project).rstrip("/") + "/",
+                        canonical(self.lanes.capture_dir(project)).rstrip("/") + "/")
+            vanished = [p for p in known if p.startswith(prefixes) and self.lanes.resolve(p) is None]
         else:
             vanished = [p for p in known if self.lanes.resolve(p) is None]
         rep = self._run(lanefiles, vanished, "rescan", prune_skipped=prune_skipped,

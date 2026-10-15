@@ -584,3 +584,83 @@ def test_a_forced_doc_that_fails_keeps_its_rows_and_heals_next_rescan(cfg, store
     assert _kinds(store) == {canonical(cap): {"session"}} and canonical(cap) in store.ledger()
     rep = pipe.rescan()
     assert not rep.failed and _kinds(store) == {canonical(cap): {"decision"}}
+
+
+# ---- retraction: a capture moved into quarantine/ leaves the index ----
+
+def _retractable(cfg, store, tmp_path, project="p"):
+    """A published capture plus a knowledge doc, indexed; returns (pipe, capture, doc)."""
+    cap = write_md(Lanes(cfg).capture_dir(project) / "2026-01-01-000000-ab12cd34-ef56ab78.md",
+                   _DECISION.format(body="retract body text here."))
+    doc = write_md(Path(cfg["paths"]["repos_dir"]) / project / "docs" / "k.md", "# k\n\nknowledge text.\n")
+    pipe = _pipe(cfg, store, tmp_path)
+    assert pipe.rescan().failed == []
+    assert canonical(cap) in pipe._ledger_view() and canonical(doc) in pipe._ledger_view()
+    return pipe, cap, doc
+
+
+def _retract(lanes, cap, project="p"):
+    q = lanes.quarantine_dir(project)
+    q.mkdir(parents=True, exist_ok=True)
+    return Path(shutil.move(str(cap), str(q / cap.name)))
+
+
+def _search_paths(store, fake_embedder, include_captures):
+    store.optimize()
+    res = store.search(fake_embedder.embed_query("retract body text"), top_k=10, include_captures=include_captures,
+                       query_text="retract body text")
+    return {r["doc_path"] for r in res}
+
+
+def test_a_project_rescan_prunes_the_projects_retracted_capture(cfg, store, fake_embedder, tmp_path):
+    pipe, cap, doc = _retractable(cfg, store, tmp_path)
+    assert canonical(cap) in _search_paths(store, fake_embedder, False)         # published: a default search finds it
+    _retract(pipe.lanes, cap)
+    rep = pipe.rescan("p")
+    assert rep.deleted_docs == 1
+    assert set(store.ledger()) == {canonical(doc)}
+    for include in (False, True):
+        assert canonical(cap) not in _search_paths(store, fake_embedder, include)
+
+
+def test_a_rescan_of_another_project_leaves_a_retracted_capture_alone(cfg, store, tmp_path):
+    """Pin: isolation holds before and after the prune covers captures."""
+    pipe, cap, doc = _retractable(cfg, store, tmp_path)
+    _retract(pipe.lanes, cap)
+    assert pipe.rescan("q").deleted_docs == 0
+    assert {canonical(cap), canonical(doc)} <= set(store.ledger())
+
+
+def test_indexing_the_old_path_of_a_moved_capture_deletes_its_rows(cfg, store, tmp_path):
+    """Pin: the watcher delivers a move's old path; index() sees it gone and deletes."""
+    pipe, cap, doc = _retractable(cfg, store, tmp_path)
+    _retract(pipe.lanes, cap)
+    assert pipe.index([str(cap)]).deleted_docs == 1
+    assert set(store.ledger()) == {canonical(doc)}
+
+
+def test_a_missing_repos_dir_leaves_a_retracted_capture_until_it_returns(cfg, store, tmp_path):
+    """Pin, documents a limit: rescan prunes nothing without repos_dir, though capture
+    pruning does not depend on it (public #79)."""
+    pipe, cap, doc = _retractable(cfg, store, tmp_path)
+    _retract(pipe.lanes, cap)
+    shutil.rmtree(cfg["paths"]["repos_dir"])
+    rep = pipe.rescan("p")
+    assert rep.prune_skipped is True and canonical(cap) in store.ledger()
+
+
+def test_a_rescan_of_another_project_does_not_heal_this_projects_capture(cfg, store, tmp_path, monkeypatch):
+    """Pin: _reclassify's project prefix keeps rescan("q") from re-embedding p's capture."""
+    cap = _session_era_capture(cfg, store, tmp_path, monkeypatch)
+    calls = []
+    real = FakeEmbedder.embed
+
+    def counting(self, texts, *a, **kw):
+        calls.append(list(texts))
+        return real(self, texts, *a, **kw)
+    monkeypatch.setattr(FakeEmbedder, "embed", counting)
+    pipe = _pipe(cfg, store, tmp_path)
+    pipe.rescan("q")
+    assert calls == [] and _kinds(store) == {canonical(cap): {"session"}}
+    pipe.rescan("p")
+    assert len(calls) == 1 and _kinds(store) == {canonical(cap): {"decision"}}
