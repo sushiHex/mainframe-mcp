@@ -309,6 +309,13 @@ def test_load_phase_fails_on_out_of_scope_or_uncited_results(tmp_path, cfg):
     run.probe_under_load = lambda: {}
     run.mark = lambda *args, **kwargs: None
     run.output.mkdir(parents=True)
-    with pytest.raises(RuntimeError, match="invalid"):
+    with pytest.raises(RuntimeError, match="invalid") as failure:
         run.load_phase("warm", 1)
-    assert run.report["load"][0]["closed_loop"]["invalid"] > 0
+    metrics = run.report["load"][0]["closed_loop"]
+    assert metrics["invalid"] > 0
+    # The record says why: the path as returned and resolved, and the roots it missed.
+    first = metrics["first_invalid"]
+    assert first["returned"] == [str(tmp_path / "elsewhere.md")]
+    assert first["resolved"] == [str((tmp_path / "elsewhere.md").resolve())]
+    assert first["roots"] == [str(run.project), str(run.state)]
+    assert "elsewhere.md" in str(failure.value)
