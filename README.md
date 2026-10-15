@@ -39,7 +39,7 @@ Activate it with `.venv\Scripts\Activate.ps1` in PowerShell, or `source .venv/bi
 
 </details>
 
-These instructions install current `main`, where Harrier and the v2 daemon are the defaults. Artifact `v2.0.0a1` shipped the prior model stack (Qwen embeddings) and the since-removed v1 stdio server; see [migration and release notes](docs/PREVIEW_RELEASE.md).
+These instructions install current `main`, where Harrier and the v2 daemon are the defaults. Artifact `v2.0.0a1` shipped the prior model stack (Qwen embeddings) and the since-removed v1 stdio server; see [migration and release notes](docs/RELEASE.md).
 
 ### 2. Choose your projects
 
@@ -214,7 +214,7 @@ To upgrade an existing installation, use the reranker settings in
 [config.example.json](config.example.json) and restart the daemon. Changing only
 the reranker does **not** require re-embedding your files.
 
-The daemon supports capture, indexing, and search. Consolidation, contradiction detection, and RAPTOR are not implemented; the [removed v1 server](docs/PREVIEW_RELEASE.md#capabilities) had them. Changing embedding settings requires a matching index; follow the [offline rebuild procedure](docs/V2.md#index-ownership-and-recovery).
+The daemon supports capture, indexing, and search. Consolidation, contradiction detection, and RAPTOR are not implemented; the [removed v1 server](docs/RELEASE.md#capabilities) had them. Changing embedding settings requires a matching index; follow the [offline rebuild procedure](docs/V2.md#index-ownership-and-recovery).
 
 A model-only embedding override uses legacy Sentence Transformers encoding. To select another native embedder, configure its model, encoding, pinned revision, query prompt, and quantization together; see [model configuration](docs/V2.md#configure-and-start).
 

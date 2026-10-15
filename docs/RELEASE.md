@@ -90,7 +90,7 @@ v2 excludes captures from search unless sessions are requested. See the
 ## Install an audited artifact
 
 Download the wheel and `SHA256SUMS` from the [releases page](https://github.com/sushiHex/mainframe-mcp/releases)
-for the version you intend to install: `v2.0.0` is the current build; `v2.0.0b1` is the previous beta;
+for the version you intend to install: `v2.0.0` is the current release; `v2.0.0b1` was the last beta;
 `v2.0.0a1` is the historical Qwen build. Verify the wheel hash against that
 manifest before installation:
 
@@ -102,9 +102,9 @@ On Linux, use `sha256sum -c SHA256SUMS` with both distribution files present.
 The manifest detects a mismatched download; it is not a signature.
 
 ```bash
-python -m venv .venv-preview
-# PowerShell: ./.venv-preview/Scripts/Activate.ps1
-# POSIX: source .venv-preview/bin/activate
+python -m venv .venv-mainframe
+# PowerShell: ./.venv-mainframe/Scripts/Activate.ps1
+# POSIX: source .venv-mainframe/bin/activate
 python -m pip install --upgrade pip
 # Install CUDA-enabled PyTorch using the selector linked below, then:
 python -m pip install ./mainframe_mcp-2.0.0-py3-none-any.whl
@@ -127,7 +127,7 @@ before loading them and check [Windows startup memory](V2.md#startup-memory-diag
    Select the intended `paths.mainframe_dir` and an explicit `paths.include_projects` list;
    an empty include list selects all eligible projects. Set `service.token` on
    shared machines. Point `MAINFRAME_CONFIG` at this file in every v2 shell/client.
-3. Run `mainframe validate --output ~/mainframe-validation/preview-01` before
+3. Run `mainframe validate --output ~/mainframe-validation/release-01` before
    production indexing. It uses synthetic files and its own state. For a soak,
    add `--duration 1800`. Keep the generated token, logs, and report private.
 4. Start `mainframe serve`, check `mainframe status`, and search the selected
@@ -166,9 +166,9 @@ Build from a clean, reviewed public commit, with output outside the checkout:
 
 ```bash
 python -m pip install build twine
-python -m build --outdir ../mainframe-preview-dist
-python -m twine check ../mainframe-preview-dist/*
-python scripts/check_install.py --wheel-dir ../mainframe-preview-dist
+python -m build --outdir ../mainframe-dist
+python -m twine check ../mainframe-dist/*
+python scripts/check_install.py --wheel-dir ../mainframe-dist
 ```
 
 `python -m build` builds the wheel from its generated source distribution.

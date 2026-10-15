@@ -100,7 +100,7 @@ model caches outside public Git.
 
 The current release is `2.0.0`; `mainframe.__version__` supplies the
 build metadata. Follow
-`docs/PREVIEW_RELEASE.md` for release artifacts, migration, and rollback;
+`docs/RELEASE.md` for release artifacts, migration, and rollback;
 release preparation produces an audited draft release, not a default switch.
 
 Tests use deterministic fake models and temporary LanceDB stores; they must
