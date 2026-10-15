@@ -29,16 +29,17 @@ KIND_HEAD = 4096
 def declared_kind(text: str) -> str:
     """A capture's published kind from its frontmatter, else "session". Read
     from the file as written: the scrubber can span the closing fence."""
-    head = text[:KIND_HEAD].replace("\r\n", "\n")
+    head = text.replace("\r\n", "\n")[:KIND_HEAD]
     kind = split_frontmatter(head)[0].get("type", "")
     return kind if kind in PUBLISHED_KINDS else "session"
 
 
 def declared_kind_of(path) -> str:
-    """`declared_kind` of a file, reading only its head."""
+    """`declared_kind` of a file, reading only its head: KIND_HEAD characters
+    with newlines translated, as `Path.read_text` yields on the index path."""
     try:
-        with open(path, "rb") as f:
-            return declared_kind(f.read(KIND_HEAD).decode("utf-8", errors="replace"))
+        with open(path, encoding="utf-8", errors="replace", newline=None) as f:
+            return declared_kind(f.read(KIND_HEAD))
     except OSError:
         return "session"
 

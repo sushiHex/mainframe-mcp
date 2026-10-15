@@ -6,6 +6,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from mainframe.core.classify import KIND_HEAD, PUBLISHED_KINDS
 from mainframe.core.hashing import content_hash
 from mainframe.core.secrets import scrub_secrets
 from mainframe.memory.atomic import create_exclusive
@@ -34,4 +35,9 @@ def write_capture(lanes, content: str, title: str, project, session_id: str = ""
                  "captured_by": scrub_secrets(captured_by),
                  # The hook's resume point: the last transcript record this capture covers.
                  **({"through": re.sub(r"[^A-Za-z0-9-]", "", through)} if through else {})})
+    if kind in PUBLISHED_KINDS and len(fm) >= KIND_HEAD:
+        # Unbounded reason/cwd/branch could push the closing fence past the head
+        # `declared_kind` reads, and the capture would silently stay `session`.
+        raise ValueError(f"capture frontmatter too long to publish: {len(fm)} characters, "
+                         f"the fence must close within {KIND_HEAD}")
     return create_exclusive(target, f"{date}-{hhmmss}-{sid}-{cid[:8]}", text=fm + body)

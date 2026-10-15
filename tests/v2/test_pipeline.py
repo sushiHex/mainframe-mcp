@@ -544,6 +544,25 @@ def test_a_rescan_reindexes_a_capture_whose_rows_predate_its_kind(cfg, store, tm
     assert pipe.rescan().unchanged == 1 and len(calls) == 1          # healed: nothing embeds again
 
 
+def test_session_capture_paths_lists_only_session_capture_rows(cfg, store, tmp_path, monkeypatch):
+    """Pin: no table and an emptied table answer [], a populated one only its session captures."""
+    assert store.session_capture_paths() == []
+    r = Path(cfg["paths"]["repos_dir"]) / "p"
+    doc = write_md(r / "docs" / "k.md", "# k\n\nknowledge text.\n")
+    pipe = _pipe(cfg, store, tmp_path)
+    pipe.index([str(doc)])
+    doc.write_text("   \n", encoding="utf-8")                  # rows go, the table stays
+    pipe.index([str(doc)])
+    assert store.count_rows() == 0 and store.session_capture_paths() == []
+    legacy = _session_era_capture(cfg, store, tmp_path, monkeypatch)
+    published = write_md(Lanes(cfg).capture_dir("p") / "2026-01-02-000000-ab12cd34-ef56ab79.md",
+                         _DECISION.format(body="already published body."))
+    doc.write_text("# k\n\nknowledge text again.\n", encoding="utf-8")
+    pipe.index([str(published), str(doc)])
+    assert _kinds(store)[canonical(published)] == {"decision"}
+    assert store.session_capture_paths() == [canonical(legacy)]
+
+
 def test_a_watcher_run_does_not_heal(cfg, store, tmp_path, monkeypatch):
     """Pin: only the periodic rescan reclassifies; index() trusts the ledger."""
     cap = _session_era_capture(cfg, store, tmp_path, monkeypatch)
@@ -555,16 +574,29 @@ def test_a_watcher_run_does_not_heal(cfg, store, tmp_path, monkeypatch):
 
 
 def test_a_failed_reclassification_scan_forces_nothing_and_prunes_on(cfg, store, tmp_path, monkeypatch):
+    cap = _session_era_capture(cfg, store, tmp_path, monkeypatch)       # a legacy `session` row set
     r = Path(cfg["paths"]["repos_dir"]) / "p"
     gone = write_md(r / "docs" / "gone.md", "# gone\n\nvanishing text.\n")
     write_md(r / "docs" / "kept.md", "# kept\n\nstays put.\n")
     pipe = _pipe(cfg, store, tmp_path)
-    assert pipe.rescan().upserted_rows == 2
-    gone.unlink()
-    monkeypatch.setattr(store, "session_capture_paths", _raises_scan)
-    rep = pipe.rescan()
-    assert rep.prune_skipped is False and rep.deleted_docs == 1 and not rep.failed
-    assert pipe.ledger_degraded is False and set(store.ledger()) == {canonical(r / "docs" / "kept.md")}
+    with monkeypatch.context() as m:
+        m.setattr(store, "session_capture_paths", _raises_scan)
+        assert pipe.rescan().upserted_rows == 2                          # the docs; the capture is not forced
+        gone.unlink()
+        calls = []
+        real = FakeEmbedder.embed
+
+        def counting(self, texts, *a, **kw):
+            calls.append(list(texts))
+            return real(self, texts, *a, **kw)
+        m.setattr(FakeEmbedder, "embed", counting)
+        rep = pipe.rescan()
+        assert rep.prune_skipped is False and rep.deleted_docs == 1 and not rep.failed
+        assert calls == [] and _kinds(store)[canonical(cap)] == {"session"}       # forced nothing
+        assert pipe.ledger_degraded is False
+        assert set(store.ledger()) == {canonical(r / "docs" / "kept.md"), canonical(cap)}
+    rep = pipe.rescan()                                                  # scan restored: the next rescan heals
+    assert not rep.failed and _kinds(store)[canonical(cap)] == {"decision"}
 
 
 def test_a_forced_doc_that_fails_keeps_its_rows_and_heals_next_rescan(cfg, store, tmp_path, monkeypatch):
