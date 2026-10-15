@@ -54,3 +54,30 @@ def test_primary_success_keeps_the_model_without_fallback_or_cache_flush(tmp_pat
     owner = object.__new__(embedder.Embedder)
     owner._load_quantized("synthetic-model", tmp_path)
     assert owner.model is model and owner.dimension == 8 and not calls
+
+
+def _dimension_owner(tmp_path, monkeypatch, model):
+    monkeypatch.setitem(sys.modules, "transformers", SimpleNamespace(BitsAndBytesConfig=lambda **kw: kw))
+    monkeypatch.setitem(sys.modules, "sentence_transformers", SimpleNamespace(SentenceTransformer=lambda *a, **kw: model))
+    monkeypatch.setattr(embedder.torch.cuda, "memory_allocated", lambda: 0)
+    owner = object.__new__(embedder.Embedder)
+    owner._load_quantized("synthetic-model", tmp_path)
+    return owner
+
+
+def test_renamed_dimension_method_alone_loads(tmp_path, monkeypatch):
+    model = SimpleNamespace(get_embedding_dimension=lambda: 12)
+    assert _dimension_owner(tmp_path, monkeypatch, model).dimension == 12
+
+
+def test_renamed_dimension_method_is_preferred_over_the_deprecated_one(tmp_path, monkeypatch):
+    def deprecated():
+        raise AssertionError("the deprecated name warns on every load")
+
+    model = SimpleNamespace(get_embedding_dimension=lambda: 12, get_sentence_embedding_dimension=deprecated)
+    assert _dimension_owner(tmp_path, monkeypatch, model).dimension == 12
+
+
+def test_deprecated_dimension_method_still_loads_on_older_versions(tmp_path, monkeypatch):
+    model = SimpleNamespace(get_sentence_embedding_dimension=lambda: 7)
+    assert _dimension_owner(tmp_path, monkeypatch, model).dimension == 7
