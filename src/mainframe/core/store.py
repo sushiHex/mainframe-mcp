@@ -222,9 +222,39 @@ class Store:
             return None
         return data if isinstance(data, dict) else None
 
+    def _marker_file(self) -> dict:
+        """The marker file as written ({} when absent, damaged, or not an object).
+        Read from the file itself, not `_read_marker`: a native index takes its
+        fingerprint from the table schema, and this field lives only here."""
+        try:
+            data = json.loads(self._marker_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def chunker_revision(self) -> int:
+        """The `CHUNKER_REVISION` this index's rows were last reconciled to; an
+        absent or unreadable value is revision 1, everything before the field
+        existed. Not part of the fingerprint: upgrading the chunker must never
+        read as drift or force a rebuild (see `fingerprint_from_config`), so the
+        pipeline repairs the affected files in place and records the revision."""
+        value = self._marker_file().get("chunker_revision")
+        return value if isinstance(value, int) and value > 0 else 1
+
+    def record_chunker_revision(self, revision: int):
+        """Rewrite the marker with the revision, keeping every other field as
+        stored: the fingerprint here describes what BUILT the rows, so replacing
+        it with today's would launder drift."""
+        data = self._marker_file() or {"format_version": FORMAT_VERSION, "fingerprint": self.fingerprint or {}}
+        data["chunker_revision"] = revision
+        write_atomic(self._marker_path(), json.dumps(data, indent=2) + "\n")
+
     def _write_marker(self):
-        write_atomic(self._marker_path(), json.dumps(
-            {"format_version": FORMAT_VERSION, "fingerprint": self.fingerprint or {}}, indent=2) + "\n")
+        data = {"format_version": FORMAT_VERSION, "fingerprint": self.fingerprint or {}}
+        stored = self._marker_file().get("chunker_revision")
+        if stored is not None:
+            data["chunker_revision"] = stored       # a fingerprint rewrite is not a re-chunk
+        write_atomic(self._marker_path(), json.dumps(data, indent=2) + "\n")
 
     def _note_drift(self, marker: dict | None):
         stored = (marker or {}).get("fingerprint") or {}
@@ -503,6 +533,20 @@ class Store:
         rows = tbl.to_lance().to_table(columns=["doc_path"],
                                        filter=f"lane = '{CAPTURE_LANE}' AND source_type = 'session'")
         return sorted(set(rows.column("doc_path").to_pylist()))
+
+    def chunk_layouts(self) -> dict:
+        """{doc_path: [(chunk_index, heading, char_start, char_end), ...]} in chunk
+        order, from ONE projected scan: what a rescan compares a fresh chunking
+        against. RAISES on a failed scan, like `ledger`."""
+        tbl = self.table
+        if tbl is None:
+            return {}
+        cols = ["doc_path", "chunk_index", "heading", "char_start", "char_end"]
+        rows = tbl.to_lance().to_table(columns=cols).to_pydict()
+        layouts: dict = {}
+        for path, *layout in zip(*(rows[c] for c in cols)):
+            layouts.setdefault(path, []).append(tuple(layout))
+        return {path: sorted(chunks) for path, chunks in layouts.items()}
 
     def search(self, query_embedding, top_k: int = 20, include_captures: bool = False,
                query_text: str = "") -> list:

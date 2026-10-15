@@ -11,8 +11,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from mainframe.core.chunker import CHUNKER_REVISION
 from mainframe.core.classify import declared_kind_of
-from mainframe.core.indexer import UNCHANGED, VANISHED, DocFailure, EmbedderUnavailable, prepare_document
+from mainframe.core.indexer import (UNCHANGED, VANISHED, DocFailure, EmbedderUnavailable, chunk_document,
+                                    prepare_document)
 from mainframe.core.paths import canonical, doc_id
 
 logger = logging.getLogger(__name__)
@@ -140,8 +142,14 @@ class IndexPipeline:
             vanished = [p for p in known if p.startswith(prefixes) and self.lanes.resolve(p) is None]
         else:
             vanished = [p for p in known if self.lanes.resolve(p) is None]
+        # Only a full rescan compares: it is the one run that sees every lane file.
+        rechunk = (self._rechunk_set(lanefiles, known)
+                   if project is None and self.store.chunker_revision() < CHUNKER_REVISION
+                   else None)
         rep = self._run(lanefiles, vanished, "rescan", prune_skipped=prune_skipped,
-                        force=self._reclassify(project))
+                        force=self._reclassify(project) | (rechunk or frozenset()))
+        if rechunk is not None and not any(f["file"] in rechunk for f in rep.failed):
+            self.store.record_chunker_revision(CHUNKER_REVISION)
         self.events.emit("index.rescan", project=project, **rep.as_dict())
         return rep
 
@@ -160,6 +168,34 @@ class IndexPipeline:
         prefix = None if project is None else canonical(self.lanes.capture_dir(project)).rstrip("/") + "/"
         return frozenset(p for p in paths
                          if (prefix is None or p.startswith(prefix)) and declared_kind_of(p) != "session")
+
+    def _rechunk_set(self, lanefiles: list, known: dict) -> frozenset | None:
+        """Indexed docs whose stored chunk layout differs from what the chunker
+        produces today: rows written by an older `CHUNKER_REVISION`, which the
+        content hash cannot flag because the file did not change. Captures
+        included — they share the chunker. None when the stored rows could not
+        be read: a failed scan forces nothing, the revision stays unrecorded, and
+        the next full rescan retries; pruning is unaffected. Likewise when the
+        ledger is degraded: an empty `known` would read as "nothing to repair"."""
+        if self.ledger_degraded:
+            return None
+        try:
+            stored = self.store.chunk_layouts()
+        except Exception as e:
+            logger.warning(f"rescan: chunk comparison scan failed ({e}); nothing forced")
+            return None
+        mismatched = set()
+        for lf in lanefiles:
+            if lf.path not in known:
+                continue
+            try:
+                text = Path(lf.path).read_text(encoding="utf-8")
+                chunks, _ = chunk_document(lf, text, self.chunk_cfg)
+            except Exception:
+                continue            # unreadable now: the run itself reports it
+            if [(c.chunk_index, c.heading, c.char_start, c.char_end) for c in chunks] != stored.get(lf.path, []):
+                mismatched.add(lf.path)
+        return frozenset(mismatched)
 
     def rebuild(self) -> IndexRunResult:
         self.store.drop()
