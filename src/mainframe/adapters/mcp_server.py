@@ -5,6 +5,7 @@ blocking work to a thread so /healthz and /shutdown stay responsive."""
 
 import asyncio
 import contextlib
+import logging
 from urllib.parse import urlsplit
 
 from mcp.server.fastmcp import FastMCP
@@ -64,8 +65,24 @@ def _register(mcp: FastMCP, app, read_only: bool):
                 return {"error": str(e), "guidance": _MAINTAIN_GUIDANCE}
 
 
+class _DiscoverProbeNoise(logging.Filter):
+    """mcp 1.x does not know `server/discover`, the opening probe of the
+    2026-07-28 protocol. It answers with an error the client falls back from,
+    which is correct, and logs a ~17-line validation dump on root for each
+    probe. Drop exactly that record; the SDK 2.x port (#69) makes it moot."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not (message.startswith("Failed to validate request") and "server/discover" in message)
+
+
 def _server(name: str) -> FastMCP:
-    return FastMCP(name, stateless_http=True, json_response=True, streamable_http_path="/")
+    root = logging.getLogger()
+    if not any(isinstance(f, _DiscoverProbeNoise) for f in root.filters):
+        root.addFilter(_DiscoverProbeNoise())
+    # The SDK configures the ROOT logger (a console handler) at log_level;
+    # INFO was a "Processing request" line per call in daemon.out.
+    return FastMCP(name, stateless_http=True, json_response=True, streamable_http_path="/", log_level="WARNING")
 
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "[::1]"})

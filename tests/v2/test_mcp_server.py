@@ -38,6 +38,23 @@ def _client(cfg, store, tmp_path):
     return TestClient(mount(full, ro), base_url="http://127.0.0.1:8420", follow_redirects=False), app
 
 
+def test_a_discover_probe_is_refused_without_a_validation_dump(cfg, store, tmp_path, capsys):
+    """The 2026-07-28 opening probe gets the error a client falls back from,
+    and only that probe's validation warning is dropped from root's output."""
+    import logging
+    c, _ = _client(cfg, store, tmp_path)
+    console = logging.StreamHandler()                          # stands in for daemon.out
+    logging.getLogger().addHandler(console)
+    try:
+        with c:
+            assert "error" in rpc(c, "/mcp", "server/discover")
+        logging.warning("Failed to validate request: some other method")
+    finally:
+        logging.getLogger().removeHandler(console)
+    err = capsys.readouterr().err
+    assert "server/discover" not in err and "some other method" in err
+
+
 def test_tool_lists_and_annotations(cfg, store, tmp_path):
     c, _ = _client(cfg, store, tmp_path)
     with c:
