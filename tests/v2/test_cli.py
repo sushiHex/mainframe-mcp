@@ -483,6 +483,34 @@ def test_task_xml_and_install_dry_run(cfg, capsys):
     assert cli.main(["install-task", "--dry-run"], config=cfg) == 0 and "schtasks" in capsys.readouterr().out
 
 
+def _fake_interpreter(tmp_path, monkeypatch, *, venv):
+    (tmp_path / "pythonw.exe").touch()
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "python.exe"))
+    monkeypatch.setattr(sys, "base_prefix", "/base")
+    monkeypatch.setattr(sys, "prefix", "/venv" if venv else "/base")
+
+
+def test_install_task_names_the_interpreter_in_a_venv(cfg, tmp_path, monkeypatch, capsys):
+    _fake_interpreter(tmp_path, monkeypatch, venv=True)
+    assert cli.main(["install-task", "--dry-run"], config=cfg) == 0
+    out = capsys.readouterr().out
+    assert str(tmp_path / "pythonw.exe") in out and "-m mainframe.adapters.cli serve" in out
+    assert "warning" not in out
+
+
+def test_install_task_warns_about_a_base_interpreter(cfg, tmp_path, monkeypatch, capsys):
+    _fake_interpreter(tmp_path, monkeypatch, venv=False)
+    assert cli.main(["install-task", "--dry-run"], config=cfg) == 0
+    out = capsys.readouterr().out
+    assert str(tmp_path / "pythonw.exe") in out and "warning" in out and "virtual environment" in out
+    assert out.isascii()
+    ran = []
+    assert cli.main(["install-task"], config=cfg, runner=lambda argv: ran.append(argv) or 0) == 0
+    assert "warning" in capsys.readouterr().out
+    assert cli.main(["install-task"], config=cfg, runner=lambda argv: 1) == 1
+    assert "task interpreter" not in capsys.readouterr().out
+
+
 def test_the_logon_task_runs_without_a_console_window(cfg, tmp_path, monkeypatch):
     """An InteractiveToken task running python.exe opens a console at every
     logon. pythonw.exe, installed beside it, is the same interpreter without

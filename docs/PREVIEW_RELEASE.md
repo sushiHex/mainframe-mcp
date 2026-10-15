@@ -84,6 +84,12 @@ python -m pip install ./mainframe_mcp-2.0.0b1-py3-none-any.whl
 mainframe --help
 ```
 
+For a resident daemon, create that environment at a fixed location (for example
+`%LOCALAPPDATA%\Mainframe\venv`), not beside the wheel, and register the logon
+task, the MCP client and the capture hooks from it; installing into a shared
+user site lets other tools' pins block upgrades. See
+[Run the daemon from its own environment](V2.md#run-the-daemon-from-its-own-environment).
+
 Choose the appropriate CUDA build using the official [PyTorch installation
 selector](https://pytorch.org/get-started/locally/). The CPU-only CI installation
 checks do not establish GPU support. Python 3.11 and 3.14 are tested on Windows
