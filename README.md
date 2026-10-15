@@ -159,7 +159,7 @@ On Windows, run `mainframe install-task` once (no elevated shell needed) for a w
 | `readiness` is `blocked` with "index built under different settings" | An embedding or chunking setting changed. Run `mainframe down`, then `mainframe rebuild`. |
 | The first search after a restart is slow | The models load on first use. Enable `service.prewarm`. |
 | `daemon.log` warns that keyword search is failing | The keyword index needs rebuilding. The next optimization does it automatically; `mainframe optimize` does it now. |
-| A daemon started by the logon task died | It writes what a crash says to `daemon.out` in the state directory, and its supervisor starts it again (1, 2, 4, 8, 16 s apart; it stops trying after six deaths in a row). `mainframe serve --once` runs one daemon process with no restarts, for debugging. |
+| A daemon started by the logon task died | It writes what a crash says to `daemon.out` in the state directory (its ordinary log is `daemon.log`, which rotates), and its supervisor starts it again (1, 2, 4, 8, 16 s apart; it stops trying after six deaths in a row). `mainframe serve --once` runs one daemon process with no restarts, for debugging. |
 
 ## For agents
 
