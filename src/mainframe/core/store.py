@@ -31,7 +31,7 @@ from pathlib import Path
 import lancedb
 import pyarrow as pa
 
-from mainframe.core.classify import CAPTURE_LANE
+from mainframe.core.classify import CAPTURE_LANE, PUBLISHED_KINDS
 from mainframe.memory.atomic import write_atomic
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,10 @@ _HEX32 = re.compile(r"[0-9a-f]{32}")
 # above 1.0 has the same effect - it is a PRIORITY, not a tuning parameter, and
 # the number it multiplies is a distance rather than a relevance score.
 _BACKSTOP = 1.01
+
+# Default search: all knowledge, plus captures an author published by kind.
+_PUBLISHED_SQL = ", ".join(f"'{k}'" for k in sorted(PUBLISHED_KINDS))
+DEFAULT_WHERE = f"lane != '{CAPTURE_LANE}' OR source_type IN ({_PUBLISHED_SQL})"
 
 # v2's index directory under `mainframe_dir`. Named here, read by everything
 # that opens the live index (the daemon, the eval harness) so the namespace is
@@ -510,16 +514,24 @@ class Store:
         if tbl is None:
             return []
 
-        where = None if include_captures else f"lane != '{CAPTURE_LANE}'"
+        where = None if include_captures else DEFAULT_WHERE
 
+        # Both branches PREFILTER: the predicate runs before the top_k cut, so
+        # excluded rows cannot fill the pool's slots (#76 was the keyword branch
+        # taking its top_k first and the post-filter below emptying it). The
+        # vector builder keeps an implicit mode unless told; the keyword one
+        # defaults to prefilter, passed anyway so neither depends on a default.
         def _vec():
             q = tbl.search(query_embedding).limit(top_k)
             if where:
-                q = q.where(where)
+                q = q.where(where, prefilter=True)
             return q.to_pandas()
 
         def _fts():
-            return tbl.search(query_text, query_type="fts").limit(top_k).to_pandas()
+            q = tbl.search(query_text, query_type="fts")
+            if where:
+                q = q.where(where, prefilter=True)
+            return q.limit(top_k).to_pandas()
 
         try:
             vec = _vec()
@@ -579,7 +591,7 @@ class Store:
         if vec.empty:
             return []
         if where and "lane" in vec.columns:
-            vec = vec[vec["lane"] != CAPTURE_LANE]
+            vec = vec[(vec["lane"] != CAPTURE_LANE) | vec["source_type"].isin(PUBLISHED_KINDS)]
             if vec.empty:
                 return []
 
