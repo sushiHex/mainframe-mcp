@@ -489,6 +489,16 @@ class Store:
             logger.warning(f"ledger scan failed: {e}")
             raise
 
+    def session_capture_paths(self) -> list:
+        """doc_paths of capture rows classified `session`: the candidates a
+        rescan re-reads for a published kind. RAISES on a failed scan, like
+        `ledger`."""
+        tbl = self.table
+        if tbl is None or tbl.count_rows() == 0:
+            return []
+        df = self._scan(["doc_path", "lane", "source_type"], table=tbl)
+        return sorted(set(df[(df["lane"] == CAPTURE_LANE) & (df["source_type"] == "session")]["doc_path"]))
+
     def search(self, query_embedding, top_k: int = 20, include_captures: bool = False,
                query_text: str = "") -> list:
         """Vector candidates with a keyword backstop, tier-boosted, stably ordered."""
