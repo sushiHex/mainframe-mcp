@@ -37,6 +37,8 @@ python -m venv .venv
 
 Activate it with `.venv\Scripts\Activate.ps1` in PowerShell, or `source .venv/bin/activate` on Linux. Then run the installation commands above. Use this environment for the daemon and its clients.
 
+Keep the daemon out of a shared Python user site, where another tool's pins can block its upgrades. Put it in a venv at a fixed location, register the logon task and the MCP client from that environment, and remove any user-site copy: see [Run the daemon from its own environment](docs/V2.md#run-the-daemon-from-its-own-environment).
+
 </details>
 
 This installs release 2.0.0; replace `@v2.0.0` with `@main` to follow development. The release also ships an audited wheel with checksums ([install an audited artifact](docs/RELEASE.md#install-an-audited-artifact)). An index built by 2.0.0a2 or 2.0.0b1 is reused as is. 2.0.0a1 used another embedding model (and shipped the since-removed v1 stdio server), so its index needs `mainframe rebuild`; see [migration and release notes](docs/RELEASE.md).
