@@ -671,14 +671,34 @@ def test_indexing_the_old_path_of_a_moved_capture_deletes_its_rows(cfg, store, t
     assert set(store.ledger()) == {canonical(doc)}
 
 
-def test_a_missing_repos_dir_leaves_a_retracted_capture_until_it_returns(cfg, store, tmp_path):
-    """Pin, documents a limit: rescan prunes nothing without repos_dir, though capture
-    pruning does not depend on it (public #79)."""
+@pytest.mark.parametrize("project", ["p", None])
+def test_a_missing_repos_dir_still_prunes_a_retracted_capture(cfg, store, tmp_path, project):
+    """Captures live under mainframe_dir, so an unmounted repos_dir says nothing
+    about them: only the knowledge rows are kept (public #79)."""
     pipe, cap, doc = _retractable(cfg, store, tmp_path)
     _retract(pipe.lanes, cap)
     shutil.rmtree(cfg["paths"]["repos_dir"])
-    rep = pipe.rescan("p")
-    assert rep.prune_skipped is True and canonical(cap) in store.ledger()
+    rep = pipe.rescan(project)
+    assert rep.prune_skipped is True and rep.deleted_docs == 1
+    assert set(store.ledger()) == {canonical(doc)}
+
+
+def test_a_missing_repos_dir_prunes_a_capture_that_vanished_at_prepare(cfg, store, tmp_path, monkeypatch):
+    """The prepare-time guard is per root too: a capture deleted between
+    enumeration and read is pruned, the unavailable root's knowledge is not."""
+    pipe, cap, doc = _retractable(cfg, store, tmp_path)
+    original = pipe.lanes.all_files
+
+    def enumerate_then_delete():
+        files = original()
+        cap.unlink()
+        shutil.rmtree(cfg["paths"]["repos_dir"])
+        return files
+
+    monkeypatch.setattr(pipe.lanes, "all_files", enumerate_then_delete)
+    rep = pipe.rescan()
+    assert rep.prune_skipped is True and rep.deleted_docs == 1
+    assert set(store.ledger()) == {canonical(doc)}
 
 
 def test_a_rescan_of_another_project_does_not_heal_this_projects_capture(cfg, store, tmp_path, monkeypatch):
