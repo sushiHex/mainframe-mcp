@@ -105,8 +105,8 @@ same action may take `{"project":"example-project"}` to rescan that project.
 
 Captures are immutable. To retract one, move its file into
 `captures/<project>/quarantine/`; a rescan or the watcher then removes its
-rows (a rescan skips all pruning while `repos_dir` is unavailable, public
-issue #79). To correct one, write the new capture, then retract the old one. A newer
+rows (an unavailable `repos_dir` suspends pruning of knowledge files only,
+never of captures). To correct one, write the new capture, then retract the old one. A newer
 capture does not demote an older one, so an unretracted old decision can still
 be returned beside its correction.
 

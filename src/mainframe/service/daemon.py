@@ -5,6 +5,7 @@ here. A second instance exits 3."""
 
 import contextlib
 import logging
+import logging.handlers
 import os
 import secrets
 import socket
@@ -28,6 +29,7 @@ from mainframe.service.watcher import Invalidation, Watcher
 
 logger = logging.getLogger(__name__)
 SLOW_STOP_WARN_SECONDS = 30.0    # how often a shutdown that is waiting out its writer says so
+LOG_MAX_BYTES, LOG_BACKUPS = 5 * 1024 * 1024, 3    # daemon.log: at most 20 MB on disk
 _LOGGING_CONFIGURED = False      # handlers are process-wide: attach them exactly once
 
 
@@ -216,9 +218,18 @@ class Daemon:
         the `mainframe` logger, not root, so library noise stays out of
         daemon.log, and it does not propagate: the MCP SDK puts a console
         handler on root, and every line used to reach stderr (daemon.out under
-        pythonw) twice."""
+        pythonw) twice. Now stderr gets a handler only when it is a terminal, so
+        daemon.out holds just what bypasses logging (tracebacks, faults, library
+        prints) and daemon.log is the one place the log lives."""
         global _LOGGING_CONFIGURED
         hf_offline_if_cached(self.config)
+        # Weight-loading progress bars are one very long `\r` line per load in
+        # daemon.out. transformers keeps its own switch; flip it only when it is
+        # already imported — importing it here would cost the daemon start.
+        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+        if "transformers" in sys.modules:
+            from transformers.utils.logging import disable_progress_bar
+            disable_progress_bar()
         if _LOGGING_CONFIGURED:
             return
         log_path = Path(self.config["paths"]["mainframe_dir"]) / "daemon.log"
@@ -227,8 +238,11 @@ class Daemon:
         pkg = logging.getLogger("mainframe")
         pkg.setLevel(logging.INFO)
         pkg.propagate = False
-        for handler in (logging.StreamHandler(sys.stderr),
-                        logging.FileHandler(log_path, encoding="utf-8", delay=True)):
+        handlers = [logging.handlers.RotatingFileHandler(
+            log_path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8", delay=True)]
+        if sys.stderr is not None and sys.stderr.isatty():     # pythonw has no stderr at all
+            handlers.insert(0, logging.StreamHandler(sys.stderr))
+        for handler in handlers:
             handler.setFormatter(fmt)
             pkg.addHandler(handler)
         _LOGGING_CONFIGURED = True
