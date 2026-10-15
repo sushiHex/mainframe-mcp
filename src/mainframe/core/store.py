@@ -31,6 +31,7 @@ from pathlib import Path
 import lancedb
 import pyarrow as pa
 
+from mainframe.core.chunker import CHUNKER_REVISION
 from mainframe.core.classify import CAPTURE_LANE, PUBLISHED_KINDS
 from mainframe.memory.atomic import write_atomic
 
@@ -249,9 +250,9 @@ class Store:
         data["chunker_revision"] = revision
         write_atomic(self._marker_path(), json.dumps(data, indent=2) + "\n")
 
-    def _write_marker(self):
+    def _write_marker(self, chunker_revision: int | None = None):
         data = {"format_version": FORMAT_VERSION, "fingerprint": self.fingerprint or {}}
-        stored = self._marker_file().get("chunker_revision")
+        stored = chunker_revision if chunker_revision is not None else self._marker_file().get("chunker_revision")
         if stored is not None:
             data["chunker_revision"] = stored       # a fingerprint rewrite is not a re-chunk
         write_atomic(self._marker_path(), json.dumps(data, indent=2) + "\n")
@@ -301,7 +302,9 @@ class Store:
         self.embedding_dim = dim
         self.table = self.db.create_table(TABLE, schema=self._schema())
         self.config_drift = {}
-        self._write_marker()
+        # A new table holds only rows the current chunker will produce, so the
+        # first rescan has nothing to re-chunk.
+        self._write_marker(chunker_revision=CHUNKER_REVISION)
         logger.info(f"Created chunks table (dim={dim})")
 
     def _ensure_table(self):

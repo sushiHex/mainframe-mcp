@@ -13,6 +13,7 @@ import json
 
 import pytest
 
+from mainframe.core.chunker import CHUNKER_REVISION
 from mainframe.core.store import INDEX_DIRNAME, IndexStaleError, Store
 from v2.test_store import _rows
 
@@ -30,7 +31,7 @@ def _fp(**over) -> dict:
 
 def test_creating_a_table_writes_the_marker(tmp_path):
     s = Store(db_path=tmp_path / "db", embedding_dim=64, fingerprint=_fp())
-    assert _marker(s) == {"format_version": 1, "fingerprint": _fp()}
+    assert _marker(s) == {"format_version": 1, "fingerprint": _fp(), "chunker_revision": CHUNKER_REVISION}
     assert s.config_drift == {}
 
 
@@ -214,9 +215,20 @@ def test_status_surfaces_config_drift(cfg, tmp_path, fake_embedder):
 
 # ---- the chunker revision rides in the marker, outside the fingerprint (#80) ----
 
-def test_an_absent_chunker_revision_is_revision_one_and_is_not_written_by_creation(tmp_path):
+def test_a_new_table_records_the_current_chunker_revision(tmp_path):
+    """Deliberately NOT absent: every row of a new table comes from the current
+    chunker, so the first rescan has nothing to re-chunk."""
+    from mainframe.core.chunker import CHUNKER_REVISION
     s = Store(db_path=tmp_path / "db", embedding_dim=64, fingerprint=_fp())
-    assert s.chunker_revision() == 1 and "chunker_revision" not in _marker(s)
+    assert s.chunker_revision() == CHUNKER_REVISION == _marker(s)["chunker_revision"]
+
+
+def test_an_absent_chunker_revision_is_revision_one(tmp_path):
+    s = Store(db_path=tmp_path / "db", embedding_dim=64, fingerprint=_fp())
+    s._marker_path().write_text(json.dumps({"format_version": 1, "fingerprint": _fp()}), encoding="utf-8")
+    assert s.chunker_revision() == 1
+    s._write_marker()                       # a rewrite does not invent one
+    assert "chunker_revision" not in _marker(s)
 
 
 def test_recording_a_chunker_revision_survives_a_reopen_without_touching_the_fingerprint(tmp_path, fake_embedder):
