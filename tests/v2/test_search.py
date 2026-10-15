@@ -226,3 +226,71 @@ def test_line_span_helper():
     text = "a\nb\nc\nd\n"
     assert line_span(text, 2, 4) == (2, 2)      # "b\n" -> line 2 only
     assert line_span(text, 2, 6) == (2, 3)      # "b\nc\n" -> lines 2-3
+
+
+def _capture(tmp_path, name, kind, body):
+    return write_md(tmp_path / "mainframe" / "captures" / "p" / name,
+                    f"---\ntype: {kind}\nproject: p\n---\n# C\n\n{body}\n")
+
+
+@pytest.mark.parametrize("kind", ["decision", "note"])
+def test_default_search_admits_published_captures(kind, cfg, store, fake_embedder, tmp_path):
+    c = _capture(tmp_path, f"2026-01-01-000000-s-{kind}.md", kind, "zebraquartz decided here.")
+    s = _capture(tmp_path, "2026-01-01-000001-s-sess.md", "session", "zebraquartz session chatter.")
+    _index(store, fake_embedder, [LaneFile(canonical(c), "capture", "p"), LaneFile(canonical(s), "capture", "p")])
+    q = fake_embedder.embed_query("zebraquartz")
+    res = store.search(q, top_k=10, include_captures=False, query_text="zebraquartz")
+    assert {r["doc_path"] for r in res} == {canonical(c)}
+    assert {r["source_type"] for r in res} == {kind}
+
+
+def test_vector_branch_prefilters_before_taking_top_k(cfg, store, fake_embedder, tmp_path):
+    caps = [_capture(tmp_path, f"2026-01-01-00000{i}-s-s{i}.md", "session", "zebra quartz")
+            for i in range(3)]
+    k = write_md(tmp_path / "repos" / "p" / "docs" / "k.md",
+                 "# K\n\nzebra quartz plus several other words diluting the match here.\n")
+    _index(store, fake_embedder, [LaneFile(canonical(c), "capture", "p") for c in caps]
+           + [LaneFile(canonical(k), "knowledge", "p")])
+    q = fake_embedder.embed_query("zebra quartz")
+    res = store.search(q, top_k=2, include_captures=False)
+    assert [r["doc_path"] for r in res] == [canonical(k)]
+
+
+class _NoVectorHits:
+    """A vector query that finds nothing, whatever `where` Store.search sets
+    (LanceDB assigns, not combines, filters, so a false predicate would be
+    overwritten)."""
+    def limit(self, n):
+        return self
+    def where(self, *a, **kw):
+        return self
+    def to_pandas(self):
+        import pandas as pd
+        return pd.DataFrame()
+
+
+class VectorlessTable:
+    """Real FTS, no vector hits: isolates the keyword backstop."""
+    def __init__(self, tbl):
+        self._tbl = tbl
+    def search(self, query=None, query_type=None, **kw):
+        if query_type == "fts":
+            return self._tbl.search(query, query_type="fts", **kw)
+        return _NoVectorHits()
+    def __getattr__(self, name):          # checkout_latest, count_rows, ...
+        return getattr(self._tbl, name)
+
+
+def test_fts_backstop_filters_before_its_limit(cfg, store, fake_embedder, monkeypatch, tmp_path):
+    """#76: the keyword branch took its top_k BEFORE the capture filter, so a
+    session capture could fill the slot and empty the pool."""
+    s = _capture(tmp_path, "2026-01-01-000000-s-sess.md", "session", "zebraquartz zebraquartz zebraquartz")
+    d = _capture(tmp_path, "2026-01-01-000001-s-dec.md", "decision",
+                 "one zebraquartz among nine other plain words in this body text")
+    _index(store, fake_embedder, [LaneFile(canonical(s), "capture", "p"), LaneFile(canonical(d), "capture", "p")])
+    monkeypatch.setattr(store, "table", VectorlessTable(store.table))
+    q = fake_embedder.embed_query("zebraquartz")
+    valid = store.search(q, top_k=1, include_captures=True, query_text="zebraquartz")
+    assert [r["doc_path"] for r in valid] == [canonical(s)]       # fixture validity
+    res = store.search(q, top_k=1, query_text="zebraquartz")
+    assert [r["doc_path"] for r in res] == [canonical(d)]

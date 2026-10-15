@@ -72,7 +72,8 @@ One topic per query. Two focused searches beat one broad one.
 
 1. Search with specific terms.
 2. If `results` is empty, rephrase per `guidance` (more/different exact
-   terms, or `include_sessions=true` to also search raw session captures) and
+   terms, or `include_sessions=true` to also search raw session captures; decision
+   and note captures are already searched) and
    retry once.
 3. Still nothing → the knowledge isn't indexed. Answer from first principles and
    consider capturing what you learn (below).
@@ -81,6 +82,9 @@ One topic per query. Two focused searches beat one broad one.
 
 Capture a durable note (via `capture_memory`, or your host's capture flow) when
 you reach a **hard-won, reusable conclusion**: a gotcha, a measured result, a
-design decision with rationale. Do NOT capture: routine task chatter,
+design decision with rationale. Use `kind=decision` or `kind=note` for those:
+they are eligible for ordinary search, so write only what you would stand behind. To
+correct one, write the new capture, then retract the old one by moving it into
+`captures/<project>/quarantine/`. Do NOT capture: routine task chatter,
 speculation, secrets, or anything that changes daily. Files are the source of
 truth; the index is derived — write the note, let the server index it.

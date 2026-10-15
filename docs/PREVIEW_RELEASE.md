@@ -57,7 +57,8 @@ The v1 column describes the `v2.0.0a1` artifact; the v1 server has since been
 | File watching and serialized daemon writes | No shared daemon | Yes |
 | Index directory | `.lancedb` | `index.lancedb` |
 
-v2 excludes captures from search unless sessions are requested. See the
+v2 excludes session captures from search unless sessions are requested;
+`decision` and `note` captures are searched by default. See the
 [v2 guide](V2.md) for scope, authentication, citations, and command details.
 
 ## Install an audited artifact

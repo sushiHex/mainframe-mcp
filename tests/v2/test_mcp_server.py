@@ -66,6 +66,30 @@ def test_tool_lists_and_annotations(cfg, store, tmp_path):
         assert [t["name"] for t in rpc(c, "/mcp/ro", "tools/list")["result"]["tools"]] == ["search", "status"]
 
 
+def test_capture_description_says_kind_decision_is_default_searchable(cfg, store, tmp_path):
+    c, _ = _client(cfg, store, tmp_path)
+    with c:
+        by = {t["name"]: t for t in rpc(c, "/mcp", "tools/list")["result"]["tools"]}
+        cap = by["capture"]["description"]
+        assert "kind=decision" in cap and "default-searchable" in cap and "quarantine" in cap
+        assert "published captures" in by["search"]["description"]
+        assert "not instructions" in by["search"]["description"]
+
+
+def test_detailed_search_of_a_published_capture_carries_source_type_decision(cfg, store, tmp_path):
+    c, app = _client(cfg, store, tmp_path)
+    with c:
+        info = json.loads(rpc(c, "/mcp", "tools/call", {"name": "capture", "arguments": {
+            "content": "## Decisions\nzebraquartz is the chosen cache.", "title": "cache", "project": "p",
+            "kind": "decision"}})["result"]["content"][0]["text"])
+        assert "type: decision" in Path(info["file"]).read_text(encoding="utf-8")
+        app.submit("rescan")
+        out = json.loads(rpc(c, "/mcp", "tools/call", {"name": "search", "arguments": {
+            "query": "zebraquartz chosen cache", "response_format": "detailed"}})["result"]["content"][0]["text"])
+        hit = [r for r in out["results"] if r["file"].endswith(Path(info["file"]).name.lower())]
+        assert hit and hit[0]["source_type"] == "decision"
+
+
 def test_search_status_maintain_over_mcp(cfg, store, tmp_path):
     c, app = _client(cfg, store, tmp_path)
     with c:
