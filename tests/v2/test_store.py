@@ -2,7 +2,8 @@ import logging
 import pytest
 
 from mainframe.core.paths import chunk_key, doc_id
-from mainframe.core.store import DocRows, Store
+from mainframe.core.indexer import DocRows
+from mainframe.core.store import Store
 
 
 def _rows(embedder, path, texts, lane="knowledge", source_type="docs", file_hash="fh1", project="proj"):

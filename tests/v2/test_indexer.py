@@ -1,6 +1,6 @@
 from mainframe.core.indexer import UNCHANGED, VANISHED, DocFailure, EmbedderUnavailable, LaneFile, prepare_document
 from mainframe.core.paths import canonical, doc_id, chunk_key
-from mainframe.core.store import DocRows
+from mainframe.core.indexer import DocRows
 from v2.helpers import write_md
 
 CHUNK = {"chunk_size": 256, "overlap_ratio": 0.35}

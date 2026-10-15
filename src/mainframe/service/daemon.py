@@ -20,19 +20,15 @@ from mainframe.config import hf_offline_if_cached, load_config
 from mainframe.service.api import TokenMiddleware, routes
 # Re-exported: discovery lives in its own module so the CLI and the stdio shim
 # can find a daemon without importing the ASGI/MCP stack.
-from mainframe.service.discovery import discovery_path, read_discovery, write_discovery  # noqa: F401
+from mainframe.service.discovery import (LOCK_HELD_EXIT, discovery_path, lock_path,  # noqa: F401
+                                        read_discovery, write_discovery)
 from mainframe.service.mutations import MutationQueue
 from mainframe.service.scheduler import Scheduler
 from mainframe.service.watcher import Invalidation, Watcher
 
 logger = logging.getLogger(__name__)
-LOCK_HELD_EXIT = 3
 SLOW_STOP_WARN_SECONDS = 30.0    # how often a shutdown that is waiting out its writer says so
 _LOGGING_CONFIGURED = False      # handlers are process-wide: attach them exactly once
-
-
-def lock_path(config) -> Path:
-    return Path(config["paths"]["mainframe_dir"]) / ".daemon.lock"
 
 
 class Daemon:
