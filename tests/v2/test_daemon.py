@@ -516,3 +516,24 @@ def test_serve_exits_3_when_locked(cfg, store, tmp_path, monkeypatch):
         assert e.value.code == LOCK_HELD_EXIT
         assert offline_calls == []
         assert logging.getLogger("mainframe").handlers == handlers_before
+
+
+def test_a_daemon_log_line_reaches_stderr_once_beside_a_root_console_handler(cfg, store, tmp_path, monkeypatch, capsys):
+    """The MCP SDK puts a console handler on root; under pythonw stderr is
+    daemon.out, which used to get every line twice."""
+    pkg, root = logging.getLogger("mainframe"), logging.getLogger()
+    saved = list(pkg.handlers), pkg.propagate, pkg.level
+    sdk_console = logging.StreamHandler()                     # what basicConfig gives root
+    monkeypatch.setattr(dmod, "_LOGGING_CONFIGURED", False)
+    monkeypatch.setattr(dmod, "hf_offline_if_cached", lambda c: None)
+    root.addHandler(sdk_console)
+    try:
+        _daemon(cfg, store, tmp_path)._configure_process()
+        logging.getLogger("mainframe.probe").info("exactly-once marker")
+        assert capsys.readouterr().err.count("exactly-once marker") == 1
+    finally:
+        root.removeHandler(sdk_console)
+        for h in pkg.handlers[len(saved[0]):]:
+            pkg.removeHandler(h)
+            h.close()
+        pkg.propagate, pkg.level = saved[1], saved[2]

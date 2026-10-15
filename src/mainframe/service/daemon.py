@@ -214,7 +214,9 @@ class Daemon:
         """Process-wide setup for the instance that WON the lock: a loser must
         exit 3 without touching the env or the logging config. Handlers go on
         the `mainframe` logger, not root, so library noise stays out of
-        daemon.log."""
+        daemon.log, and it does not propagate: the MCP SDK puts a console
+        handler on root, and every line used to reach stderr (daemon.out under
+        pythonw) twice."""
         global _LOGGING_CONFIGURED
         hf_offline_if_cached(self.config)
         if _LOGGING_CONFIGURED:
@@ -224,6 +226,7 @@ class Daemon:
         fmt = logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s")
         pkg = logging.getLogger("mainframe")
         pkg.setLevel(logging.INFO)
+        pkg.propagate = False
         for handler in (logging.StreamHandler(sys.stderr),
                         logging.FileHandler(log_path, encoding="utf-8", delay=True)):
             handler.setFormatter(fmt)
@@ -244,7 +247,10 @@ class Daemon:
             self.open()
             sock = self.bind()
             app = self.build()
-            self._server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="info"))
+            # No access log: `up`, `status` and every client's liveness probe
+            # poll /healthz, and each poll was a line in daemon.out.
+            self._server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=self.port, log_level="info",
+                                                         access_log=False))
             self._server.run(sockets=[sock])
         finally:
             if sock is not None:
