@@ -80,11 +80,30 @@ class DaemonClient:
         return r.json()
 
 
-def task_xml(config: dict) -> str:
+TASK_ARGUMENTS = "-m mainframe.adapters.cli serve"
+
+
+def task_interpreter() -> str:
     # An InteractiveToken task running python.exe opens a console at every
     # logon; pythonw.exe beside it is the same interpreter without one.
     windowless = Path(sys.executable).with_name("pythonw.exe")
-    exe = escape(str(windowless) if windowless.exists() else sys.executable)
+    return str(windowless) if windowless.exists() else sys.executable
+
+
+def task_report(interpreter: str) -> list:
+    """What the task runs, as lines to print: the interpreter and arguments, and
+    a warning when it is not a virtual environment's, because a base interpreter
+    shares its (user) site-packages with every other tool installed there."""
+    lines = [f"mainframe: task interpreter: {interpreter}", f"mainframe: task arguments: {TASK_ARGUMENTS}"]
+    if sys.prefix == sys.base_prefix:
+        lines.append("mainframe: warning: this is a base interpreter, not a virtual environment; its "
+                     "site-packages (or the Python user site) are shared with other tools. "
+                     "Run install-task with a dedicated environment's python (docs/V2.md).")
+    return lines
+
+
+def task_xml(config: dict) -> str:
+    exe = escape(task_interpreter())
     wd = escape(config["paths"]["mainframe_dir"])
     # The task fires at, and runs as, the logon of the user who registers it.
     # A trigger on ANY user's logon is what made registering it need an
@@ -113,7 +132,7 @@ def task_xml(config: dict) -> str:
   <Actions Context="Author">
     <Exec>
       <Command>{exe}</Command>
-      <Arguments>-m mainframe.adapters.cli serve</Arguments>
+      <Arguments>{TASK_ARGUMENTS}</Arguments>
       <WorkingDirectory>{wd}</WorkingDirectory>
     </Exec>
   </Actions>
@@ -543,12 +562,16 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
         cmd = schtasks_command(xml_path)
         if args.dry_run:
             print(" ".join(cmd))
+            print("\n".join(task_report(task_interpreter())))
             return 0
         try:
-            return (runner or subprocess.call)(cmd)   # the user's own command: schtasks' output is the report
+            rc = (runner or subprocess.call)(cmd)   # the user's own command: schtasks' output is the report
         except OSError:               # no schtasks: not Windows
             print(NO_SCHTASKS, file=sys.stderr)
             return 1
+        if rc == 0:
+            print("\n".join(task_report(task_interpreter())))
+        return rc
     if args.cmd == "rebuild":
         _emit(run_offline_rebuild(config))       # never routed to a live daemon: see run_offline_rebuild
         return 0
