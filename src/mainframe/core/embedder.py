@@ -20,6 +20,12 @@ logger = logging.getLogger(__name__)
 _BNB_INT8_GRID_MAX = 65535
 
 
+def _embedding_dimension(model) -> int:
+    """sentence-transformers renamed get_sentence_embedding_dimension to get_embedding_dimension."""
+    getter = getattr(model, "get_embedding_dimension", None) or model.get_sentence_embedding_dimension
+    return getter()
+
+
 class Embedder:
     encoding: dict | None = None
 
@@ -90,7 +96,7 @@ class Embedder:
                 cache_folder=str(cache_dir),
                 trust_remote_code=True,
             )
-            self.dimension = self.model.get_sentence_embedding_dimension()
+            self.dimension = _embedding_dimension(self.model)
             logger.info(f"Loaded: dim={self.dimension}, VRAM={torch.cuda.memory_allocated()/1024**3:.1f}GB")
             return
         except Exception as e:
@@ -132,7 +138,7 @@ class Embedder:
         logger.info("Loading %s (%s on %s)...", model_name, 'native BF16' if self.encoding else 'default precision', device)
         self.model = SentenceTransformer(
             model_name, cache_folder=str(cache_dir), device=device, **kwargs)
-        self.dimension = self.model.get_sentence_embedding_dimension()
+        self.dimension = _embedding_dimension(self.model)
 
     @staticmethod
     def _last_token_pool(last_hidden_states, attention_mask):

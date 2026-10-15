@@ -151,7 +151,8 @@ def experimental_factories(native_embedder: bool, bf16_reranker: bool, *, query_
                 model_name, cache_folder=str(cache_dir), device=device,
                 trust_remote_code=trust_remote_code,
                 model_kwargs={"dtype": torch.bfloat16, "attn_implementation": "sdpa"})
-            self.dimension = self.model.get_sentence_embedding_dimension()
+            self.dimension = (getattr(self.model, "get_embedding_dimension", None)
+                              or self.model.get_sentence_embedding_dimension)()
             if gate is not None:
                 # ST invokes its root forward directly; ST 5.4 also invokes the
                 # HF forward directly. Its enclosing Transformer module is the
