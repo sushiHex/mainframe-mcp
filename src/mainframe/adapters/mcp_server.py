@@ -55,7 +55,7 @@ def _register(mcp: FastMCP, app, read_only: bool):
                 return {"error": str(e), "guidance": "project must be a plain name; kind is session|decision|note"}
 
     @mcp.tool(name="status", annotations=READ_ONLY,
-              description="Daemon health: models, VRAM, index rows/versions/indexes, pending captures, recent events.")
+              description="Daemon health: models, VRAM, index rows/versions/indexes, recent events.")
     async def status() -> dict:
         return await asyncio.to_thread(app.status)
 

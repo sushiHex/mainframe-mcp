@@ -35,13 +35,13 @@ def test_search_status_offline(cfg, store, tmp_path, monkeypatch):
     st = app.status()
     assert st["index"]["rows"] == 1 and st["index"]["docs"] == 1 and st["index"]["last_run"]["kind"] == "rescan"
     assert st["models"]["embedder"]["state"] == "loaded" and st["vram"] is None and "torch" not in sys.modules
-    assert st["memory"]["mode"] == "index-and-search only" and st["memory"]["pending"] == {}
+    assert st["memory"] == {"mode": "published captures"}   # no counts: status reads cached health, never scans
     assert st["daemon"]["queue_depth"] is None and st["recent_events"][0]["kind"] == "index.rescan"
     with pytest.raises(ValueError):
         app.submit("nope")
 
 
-def test_capture_writes_a_pending_file_and_the_ordinary_scan_indexes_it(cfg, store, tmp_path):
+def test_capture_writes_a_file_and_the_ordinary_scan_indexes_it(cfg, store, tmp_path):
     """`capture` submits nothing: the capture root is a watch root, so the file
     reaches the index the same way every other file does. The write is the
     durable part; the scan (watcher debounce in production, explicit here) is
@@ -49,7 +49,7 @@ def test_capture_writes_a_pending_file_and_the_ordinary_scan_indexes_it(cfg, sto
     app = _attach(_app(cfg, store, tmp_path))
     res = app.capture("## Summary\nqwen3 decided.\n", "decision", project="p", session_id="abcd1234")
     assert res["project"] == "p" and Path(res["file"]).exists()
-    assert app.store.count_rows() == 0 and app.status()["memory"]["pending"] == {"p": 1}
+    assert app.store.count_rows() == 0
     app.submit("index", [res["file"]])
     assert app.search("qwen3", include_sessions=True)["results"][0]["file"] == canonical(res["file"])
     app.mutations.stop()
