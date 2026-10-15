@@ -87,6 +87,7 @@ def summarize(records, wall):
             "max_seconds": max(done, default=None), "overload": overload,
             "timeouts": count("timeout"), "uncited": count("uncited"), "empty": count("empty"),
             "invalid": count("invalid"),
+            "first_invalid": next((r["why"] for r in records if r["outcome"] == "invalid"), None),
             "errors": [r["error"] for r in records if r["outcome"] == "error"][:20]}
 
 
@@ -377,6 +378,9 @@ class ValidationRun:
                 files = [Path(h["file"]).resolve() for h in hits]
                 if not all(f.is_relative_to(self.project) or f.is_relative_to(self.state) for f in files):
                     record["outcome"] = "invalid"
+                    # Keep the evidence: what came back, what it resolved to, what it missed.
+                    record["why"] = {"returned": [h["file"] for h in hits], "resolved": [str(f) for f in files],
+                                     "roots": [str(self.project), str(self.state)]}
                 elif not hits:
                     record["outcome"] = "empty"
                 elif not all("line_start" in h for h in hits):
@@ -510,8 +514,9 @@ class ValidationRun:
         phase["under_load"] = {k: v for k, v in probe.items() if k != "error"}
         self.report["load"].append(phase)
         self.save()
-        require(not any(phase[s]["invalid"] for s in ("closed_loop", "burst")),
-                "load phase returned invalid results (outside validation scope); see report.json")
+        invalid = next((phase[s]["first_invalid"] for s in ("closed_loop", "burst") if phase[s]["invalid"]), None)
+        require(invalid is None,
+                f"load phase returned invalid results (outside validation scope); see report.json: {invalid}")
         require("error" not in probe, f"load phase probe failed: {probe.get('error')}")
         self.mark("load phase", label=label, clients=clients,
                   completed_per_second=phase["closed_loop"]["completed_per_second"],
