@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from mainframe.core.chunker import chunk_markdown
-from mainframe.core.classify import CAPTURE_LANE, classify_source_type
+from mainframe.core.classify import CAPTURE_LANE, classify_source_type, declared_kind
 from mainframe.core.device import is_device_failure
 from mainframe.core.hashing import content_hash, file_hash
 from mainframe.core.paths import chunk_key, doc_id
@@ -85,6 +85,8 @@ def prepare_document(lf: LaneFile, chunk_cfg: dict, embed, known_hash: str | Non
     if known_hash is not None and known_hash == fh:
         return UNCHANGED
     did = doc_id(lf.path)
+    # Read from the file as written: the scrub below can span the closing fence.
+    kind = declared_kind(text) if lf.lane == CAPTURE_LANE else "session"
     if lf.lane == CAPTURE_LANE:
         # Choke-point scrub: every capture-lane chunk is scrubbed before it can
         # be embedded or searched, regardless of which writer produced the file.
@@ -146,7 +148,7 @@ def prepare_document(lf: LaneFile, chunk_cfg: dict, embed, known_hash: str | Non
     except OSError:
         authored_at = ""
     indexed_at = now or datetime.now().isoformat()
-    source_type = classify_source_type(lf.lane, lf.path)
+    source_type = classify_source_type(lf.lane, lf.path, kind)
     rows = [{
         "chunk_key": chunk_key(did, c.chunk_index), "doc_id": did, "doc_path": lf.path,
         "project": lf.project, "lane": lf.lane, "source_type": source_type,
