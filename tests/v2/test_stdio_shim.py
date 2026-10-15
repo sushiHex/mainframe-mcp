@@ -4,7 +4,7 @@ import json
 import httpx
 import pytest
 
-from mainframe.adapters.mcp_stdio_shim import forward, make_post, run
+from mainframe.adapters.mcp_stdio_shim import era_headers, forward, make_post, run
 from mainframe.service.daemon import write_discovery
 
 
@@ -35,6 +35,8 @@ class FakeLoopback:
         self.port, self.nonce = port, nonce
         self.status, self.post_error = status, post_error
         self.attempts, self.received, self.probes = [], [], []
+        self.sent_headers = []              # headers of every POST delivered
+        self.reply = {"result": "ok"}       # the body served for a POST
 
     def restart(self, port, nonce):
         """A new daemon process: `service.port` is 0, so the OS hands it a
@@ -63,7 +65,8 @@ class FakeLoopback:
         if self.post_error is not None:
             raise self.post_error
         self.received.append(json.loads(content))
-        return _Response(url, self.status, {"result": "ok"})
+        self.sent_headers.append(dict(headers or {}))
+        return _Response(url, self.status, self.reply)
 
 
 def test_forward_request_and_notification():
@@ -292,3 +295,70 @@ def test_a_failed_send_never_leaves_an_address_cached(cfg):
     daemon.status = 200
     assert post(_req(3))["result"] == "ok"
     assert daemon.probes == [9100, 9239, 9239]          # probed again, not reused blind
+
+
+_V = "io.modelcontextprotocol/protocolVersion"
+
+
+def _modern(method="server/discover"):
+    return {"jsonrpc": "2.0", "id": 1, "method": method, "params": {"_meta": {_V: "2026-07-28"}}}
+
+
+def test_era_headers_stamp_a_modern_message_only():
+    assert era_headers(_modern()) == {"mcp-protocol-version": "2026-07-28", "mcp-method": "server/discover"}
+    assert era_headers(_modern("tools/list"))["mcp-method"] == "tools/list"
+    for msg in (
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
+        {"jsonrpc": "2.0", "id": 1, "method": "ping"},
+        {"jsonrpc": "2.0", "id": 1, "method": "ping", "params": [{"_meta": {_V: "2026-07-28"}}]},
+        {"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {"_meta": "2026-07-28"}},
+        {"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {"_meta": {_V: 20260728}}},
+        {"jsonrpc": "2.0", "id": 1, "result": {}, "params": {"_meta": {_V: "2026-07-28"}}},   # a response: no method
+    ):
+        assert era_headers(msg) == {}, msg
+
+
+def test_post_forwards_era_headers_and_keeps_authorization(cfg):
+    cfg["service"]["token"] = "tok"
+    write_discovery(cfg, 9100, "n")
+    daemon = FakeLoopback(9100, "n")
+    post = make_post(cfg, http=daemon)
+
+    assert post(_modern())["result"] == "ok"
+    assert post(_req(2))["result"] == "ok"
+    modern, legacy = daemon.sent_headers
+    assert modern["mcp-protocol-version"] == "2026-07-28" and modern["mcp-method"] == "server/discover"
+    assert modern["Authorization"] == "Bearer tok" and modern["Content-Type"] == "application/json"
+    assert "mcp-protocol-version" not in legacy and "mcp-method" not in legacy
+    assert legacy["Authorization"] == "Bearer tok"
+
+
+def test_a_jsonrpc_error_body_at_a_4xx_is_returned_and_keeps_the_address(cfg):
+    write_discovery(cfg, 9100, "n")
+    daemon = FakeLoopback(9100, "n")
+    post = make_post(cfg, http=daemon)
+    assert post(_req(1))["result"] == "ok"                      # caches 9100
+
+    err = {"jsonrpc": "2.0", "id": 2, "error": {"code": -32000, "message": "unsupported version"}}
+    daemon.status, daemon.reply = 400, err
+    assert post(_req(2)) == err                                 # handed to the caller, not raised
+
+    daemon.status, daemon.reply = 200, {"result": "ok"}
+    assert post(_req(3))["result"] == "ok"
+    assert daemon.probes == [9100]                              # one discovery: the address was kept
+    assert daemon.attempts == [9100, 9100, 9100]
+
+
+def test_a_rest_error_body_at_a_401_raises_and_clears_the_address(cfg):
+    write_discovery(cfg, 9100, "n")
+    daemon = FakeLoopback(9100, "n")
+    post = make_post(cfg, http=daemon)
+    assert post(_req(1))["result"] == "ok"
+
+    daemon.status, daemon.reply = 401, {"error": "unauthorized"}
+    with pytest.raises(httpx.HTTPStatusError):
+        post(_req(2))
+
+    daemon.status, daemon.reply = 200, {"result": "ok"}
+    assert post(_req(3))["result"] == "ok"
+    assert daemon.probes == [9100, 9100]                        # re-discovered: the cache was cleared
