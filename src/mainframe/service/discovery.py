@@ -22,6 +22,11 @@ from mainframe.memory.atomic import write_atomic
 # Set by `mainframe serve` (the supervisor) for the `serve --once` child it runs;
 # discovery records it so `mainframe down` can wait for the whole tree.
 SUPERVISOR_PID_ENV = "MAINFRAME_SUPERVISOR_PID"
+LOCK_HELD_EXIT = 3   # `serve --once`: another instance holds the lock
+
+
+def lock_path(config) -> Path:
+    return Path(config["paths"]["mainframe_dir"]) / ".daemon.lock"
 
 
 def discovery_path(config) -> Path:

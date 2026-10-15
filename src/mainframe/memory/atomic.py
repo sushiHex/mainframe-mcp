@@ -1,5 +1,6 @@
 """Durable file primitives: tmp → fsync → os.replace for rewrites;
-exclusive-create with a collision counter for immutable captures."""
+tmp → fsync → os.link (never overwrites) with a collision counter for
+immutable captures."""
 
 import os
 from pathlib import Path
@@ -24,35 +25,34 @@ def write_atomic(path: Path, text: str) -> None:
 
 
 def create_exclusive(directory: Path, base: str, suffix: str = ".md", text: str = "") -> Path:
-    """Create `<base><suffix>` (or `<base>-N<suffix>`) with O_EXCL and write `text`
-    through the same descriptor — a crash can never leave a zero-byte file that
-    a later writer would skip as "already captured". Race-safe between two
-    writers; never overwrites. Returns the created path."""
+    """Publish `text` as `<base><suffix>` (or `<base>-N<suffix>`): written and
+    fsynced under a temporary name, then hard-linked into place. A link never
+    overwrites, so this is race-safe between two writers, and the published
+    name only ever holds the complete text: a process killed mid-write (a hook
+    past its timeout) leaves at most a stray `.tmp`, never a short capture that
+    a later writer would skip as "already captured". Returns the path."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    n = 1
-    while True:
-        name = f"{base}{suffix}" if n == 1 else f"{base}-{n}{suffix}"
-        path = directory / name
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            n += 1
-            continue
-        except PermissionError:
-            if path.is_dir():  # Windows reports an existing directory as EACCES, not EEXIST
-                n += 1
-                continue
-            raise
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-                f.write(text)
-                f.flush()
-                os.fsync(f.fileno())
-        except BaseException:
+    tmp = directory / f".{base}{suffix}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "x", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        n = 1
+        while True:
+            path = directory / (f"{base}{suffix}" if n == 1 else f"{base}-{n}{suffix}")
             try:
-                os.unlink(path)
-            except OSError:
-                pass
-            raise
-        return path
+                os.link(tmp, path)
+                return path
+            except FileExistsError:
+                n += 1
+            except PermissionError:
+                if not path.is_dir():  # Windows reports an existing directory as EACCES, not EEXIST
+                    raise
+                n += 1
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass

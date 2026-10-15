@@ -1,8 +1,18 @@
-"""The Claude Code SessionEnd hook (spec 5.1): zero-VRAM extractive capture.
+"""The Claude Code capture hooks (spec 5.1): zero-VRAM extractive capture.
 
-`mainframe hook session-end` reads the hook event JSON on stdin
-({session_id, transcript_path, cwd, reason}), parses the transcript JSONL
-within `capture.max_transcript_bytes`, applies the gate, and exclusive-creates
+A capture covers one SEGMENT of a session: the transcript after the last
+point already accounted for -- its last compaction (a `compact_boundary`
+record) or the record a previous capture of it ended at (its `through`) --
+or from its start. Long sessions are compacted many times and rarely end, so
+one capture per session would be a capture a week, its "task" the session's
+first prompt. `mainframe hook pre-compact` captures what a compaction is about
+to summarize; `mainframe hook session-end` captures what is left. A compaction
+that fails, or a session resumed after it ended, is picked up where the last
+capture stopped: nothing is captured twice and nothing is skipped.
+
+Each reads the hook event JSON on stdin ({session_id, transcript_path, cwd,
+reason | trigger}), parses the segment within `capture.max_transcript_bytes`,
+applies the gate, and exclusive-creates
 ONE scrubbed file through the same writer the MCP tool and the CLI use
 (`write_capture`) -- so a hook capture has exactly their shape: one frontmatter
 block, one `capture_id`, sections in the body. It contacts no daemon: the
@@ -12,7 +22,9 @@ WAL event store is multi-writer precisely so an out-of-process hook can append
 anyway: it records `rest` for whatever posts to it, by design.)
 
 Every decision is one line in `<mainframe_dir>/hook.log`. `main` never raises:
-a capture is never worth a broken session teardown.
+a capture is never worth a broken session teardown or compaction. Nothing here
+may import the store, the models or the MCP stack: SessionEnd's default hook
+timeout is 1.5 s (test_capture_hook pins the import set).
 """
 
 import json
@@ -26,12 +38,18 @@ from types import SimpleNamespace
 
 from mainframe.config import DEFAULTS, load_config
 from mainframe.memory.capture import write_capture
-from mainframe.memory.lanes import ADHOC_PROJECT, SAFE_NAME_RE, Lanes
+from mainframe.memory.frontmatter import split
+from mainframe.memory.lanes import ADHOC_PROJECT, OVERFLOW, SAFE_NAME_RE, Lanes
 from mainframe.service.events import EventStore
 
 CAPTURED_BY = "hook"
 LOG_NAME = "hook.log"
-HEAD_BYTES = 1024 * 1024        # of an oversize transcript: the task is at the head, the outcome at the tail
+HEAD_BYTES = 1024 * 1024        # of an oversize segment: the task is at the head, the outcome at the tail
+SCAN_BYTES = 4 * 1024 * 1024    # backward-scan block when looking for the segment's start
+# A record's own keys. Inside a JSON string the quotes would be escaped, so
+# neither matches quoted transcript text; every hit is still parsed and checked.
+_BOUNDARY = rb'"subtype"\s*:\s*"compact_boundary"'
+_SKIPPED_FLAGS = ("isSidechain", "isCompactSummary", "isMeta", "isVisibleInTranscriptOnly")
 _MAX_USER_TURNS = 12
 _MAX_ASSISTANT_TURNS = 40
 
@@ -52,14 +70,51 @@ def _is_capture_tool(name) -> bool:
     return "mainframe" in name and name.endswith("capture")
 
 
-def read_transcript(path, cap: int) -> tuple[list[str], bool]:
-    """The transcript's lines. `bounded` is True when the file was larger than
-    `cap` and only its first HEAD_BYTES and the tail that fits were read -- the
-    counters are then unknown, and the gate fails open."""
+def _accounted_for(rec, through) -> bool:
+    return isinstance(rec, dict) and (
+        (rec.get("type") == "system" and rec.get("subtype") == "compact_boundary") or rec.get("uuid") in through)
+
+
+def segment_start(f, size: int, through=frozenset()) -> int:
+    """The offset just past the last record already accounted for: a
+    compact_boundary record, or one whose `uuid` is in `through`. 0 when there
+    is none. Scans backwards in blocks; a block that is all one line is carried
+    into the next, so a hit is always parsed as a whole line."""
+    alternatives = [_BOUNDARY] + [rb'"uuid"\s*:\s*"' + re.escape(u.encode()) + rb'"' for u in through]
+    needle = re.compile(b"|".join(alternatives))
+    pos, carry = size, b""
+    while pos > 0:
+        lo = max(0, pos - SCAN_BYTES)
+        f.seek(lo)
+        buf = f.read(pos - lo) + carry
+        first = buf.find(b"\n") if lo else -1    # buf[:first + 1] may be a torn line
+        if lo and first == -1:
+            pos, carry = lo, buf
+            continue
+        for hit in reversed([m.start() for m in needle.finditer(buf, first + 1)]):
+            start, end = buf.rfind(b"\n", 0, hit) + 1, buf.find(b"\n", hit)
+            end = len(buf) if end == -1 else end
+            try:
+                rec = json.loads(buf[start:end])
+            except ValueError:
+                continue
+            if _accounted_for(rec, through):
+                return min(lo + end + 1, size)
+        pos, carry = lo, buf[:first + 1]
+    return 0
+
+
+def read_transcript(path, cap: int, through=frozenset()) -> tuple[list[str], bool]:
+    """The segment's lines (see `segment_start`). `bounded` is True when the
+    segment was larger than `cap` and only its first HEAD_BYTES and the tail
+    that fits were read -- the counters are then unknown, and the gate fails
+    open."""
     p = Path(path)
     size = p.stat().st_size
     with p.open("rb") as f:
-        if size <= cap:
+        start = segment_start(f, size, through)
+        f.seek(start)
+        if size - start <= cap:
             data, bounded = f.read(), False
         else:
             head_n = min(HEAD_BYTES, cap // 2)
@@ -74,15 +129,21 @@ def parse(lines) -> dict:
     """Per-MESSAGE counters and bounded text: a user message counts once when it
     is non-sidechain with a non-noise text block; an assistant message counts
     once when it is non-sidechain with a tool_use block. A capture tool_use is
-    noticed even on a sidechain: SOME agent captured this session."""
+    noticed even on a sidechain: SOME agent captured this segment. Harness
+    records are not prompts: the summary a compaction leaves (the previous
+    segment's), meta and transcript-only records. `through` is the uuid of the
+    segment's last record, where the next capture of this session starts."""
     s = {"session_id": "", "cwd": "", "git_branch": "", "users": [], "assistants": [],
-         "prompts": 0, "tool_uses": 0, "agent_captured": False}
+         "prompts": 0, "tool_uses": 0, "agent_captured": False, "through": ""}
     for line in lines:
         try:
             obj = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(obj, dict) or obj.get("type") not in ("user", "assistant"):
+        if not isinstance(obj, dict):
+            continue
+        s["through"] = str(obj.get("uuid") or s["through"])
+        if obj.get("type") not in ("user", "assistant"):
             continue
         content = (obj.get("message") or {}).get("content")
         blocks = content if isinstance(content, list) else [{"type": "text", "text": content}]
@@ -90,7 +151,7 @@ def parse(lines) -> dict:
         tools = [str(b.get("name", "")) for b in blocks if b.get("type") == "tool_use"]
         if any(_is_capture_tool(t) for t in tools):
             s["agent_captured"] = True
-        if obj.get("isSidechain"):
+        if any(obj.get(flag) for flag in _SKIPPED_FLAGS):
             continue
         for key, src in (("session_id", "sessionId"), ("cwd", "cwd"), ("git_branch", "gitBranch")):
             s[key] = s[key] or str(obj.get(src) or "")
@@ -151,8 +212,27 @@ def project_for(cwd: str, lanes: Lanes) -> str:
     return name if SAFE_NAME_RE.match(name) else ADHOC_PROJECT
 
 
-def session_end(config: dict, event: dict, now: datetime | None = None) -> dict:
-    """Gate and act for one SessionEnd event; the decision is the return value.
+def _captured_through(lanes: Lanes, sid8: str) -> frozenset:
+    """Where earlier captures of this session ended: their `through` uuids,
+    from the lane and overflow alike. An 8-character id shared by another
+    session only adds uuids its transcript does not contain."""
+    if not sid8:
+        return frozenset()
+    root = lanes.mainframe_dir / "captures"
+    files = [*root.glob(f"*/*-{sid8}-*.md"), *root.glob(f"*/{OVERFLOW}/*-{sid8}-*.md")]
+    return frozenset(filter(None, (split(p.read_text(encoding="utf-8", errors="replace"))[0].get("through")
+                                   for p in files)))
+
+
+def _event_reason(event: dict) -> str:
+    """SessionEnd says why the session ended; PreCompact says what compacted it."""
+    if event.get("hook_event_name") == "PreCompact":
+        return f"pre-compact:{event.get('trigger') or 'unknown'}"
+    return str(event.get("reason") or "")
+
+
+def capture_segment(config: dict, event: dict, now: datetime | None = None) -> dict:
+    """Gate and act for one hook event; the decision is the return value.
     Raises only on a bug -- `main` is the never-raise boundary."""
     cap, lanes, now = config["capture"], Lanes(config), now or datetime.now()
     sid = re.sub(r"[^A-Za-z0-9-]", "", str(event.get("session_id") or ""))
@@ -160,9 +240,10 @@ def session_end(config: dict, event: dict, now: datetime | None = None) -> dict:
     transcript = str(event.get("transcript_path") or "")
     if not transcript or not Path(transcript).is_file():
         return dict(out, reason="no transcript")
-    lines, bounded = read_transcript(transcript, int(cap["max_transcript_bytes"]))
+    sid8 = sid[:8]
+    lines, bounded = read_transcript(transcript, int(cap["max_transcript_bytes"]), _captured_through(lanes, sid8))
     parsed = parse(lines)
-    out["session_id"] = sid8 = (sid or parsed["session_id"])[:8]
+    out["session_id"] = sid8 = sid8 or parsed["session_id"][:8]
     cwd = str(event.get("cwd") or parsed["cwd"])
     out["project"] = project = project_for(cwd, lanes) if cwd else ADHOC_PROJECT
     # The gate, in spec order; the first hit decides.
@@ -175,9 +256,7 @@ def session_end(config: dict, event: dict, now: datetime | None = None) -> dict:
     if not body.strip():
         return dict(out, reason="nothing extractable")
     if parsed["agent_captured"]:
-        return dict(out, reason="the agent captured this session itself")
-    if sid8 and any((lanes.mainframe_dir / "captures").glob(f"*/*-{sid8}-*.md")):
-        return dict(out, reason="a capture for this session exists")
+        return dict(out, reason="the agent captured this segment itself")
     today = now.strftime("%Y-%m-%d")
     full = sum(1 for _ in lanes.capture_dir(project).glob(f"{today}-*.md")) >= int(cap["daily_cap"])
     # At the daily cap the capture goes to overflow/ (neither indexed nor
@@ -185,23 +264,24 @@ def session_end(config: dict, event: dict, now: datetime | None = None) -> dict:
     # for the directory.
     target = SimpleNamespace(capture_dir=lanes.overflow_dir) if full else lanes
     path = write_capture(target, body, title, project, session_id=sid8, captured_by=CAPTURED_BY,
-                         cwd=cwd, branch=parsed["git_branch"], reason=str(event.get("reason") or ""), now=now)
+                         cwd=cwd, branch=parsed["git_branch"], reason=_event_reason(event),
+                         through=parsed["through"], now=now)
     EventStore(lanes.mainframe_dir / "events.db").emit(
         "capture.written", project=project, path=str(path), captured_by=CAPTURED_BY,
         **({"overflow": True} if full else {}))
     return dict(out, decision="overflow" if full else "written", path=str(path))
 
 
-def _log(mainframe_dir: Path, line: str) -> None:
+def _log(mainframe_dir: Path, hook: str, line: str) -> None:
     try:
         mainframe_dir.mkdir(parents=True, exist_ok=True)
         with (mainframe_dir / LOG_NAME).open("a", encoding="utf-8") as f:
-            f.write(f"{datetime.now().isoformat(timespec='seconds')} session-end {line}\n")
+            f.write(f"{datetime.now().isoformat(timespec='seconds')} {hook} {line}\n")
     except OSError:
         pass
 
 
-def main(config: dict | None = None, stdin=None, now: datetime | None = None) -> int:
+def main(config: dict | None = None, stdin=None, now: datetime | None = None, hook: str = "session-end") -> int:
     """The hook process: one decision line in hook.log, exit 0 whatever happened."""
     mainframe_dir = Path(DEFAULTS["paths"]["mainframe_dir"])
     try:
@@ -209,10 +289,10 @@ def main(config: dict | None = None, stdin=None, now: datetime | None = None) ->
         mainframe_dir = Path(config["paths"]["mainframe_dir"])
         raw = (stdin or sys.stdin).read()
         event = json.loads(raw) if raw.strip() else {}
-        r = session_end(config, event if isinstance(event, dict) else {}, now=now)
+        r = capture_segment(config, event if isinstance(event, dict) else {}, now=now)
         line = (f"{r['decision']} project={r['project'] or '-'} session={r['session_id'] or '-'}: "
                 f"{r.get('path') or r.get('reason')}")
     except Exception as e:
         line = f"error {type(e).__name__}: {e}"
-    _log(mainframe_dir, line)
+    _log(mainframe_dir, hook, line)
     return 0

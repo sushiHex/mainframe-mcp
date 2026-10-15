@@ -16,8 +16,7 @@ from xml.sax.saxutils import escape
 import httpx
 
 from mainframe.config import load_config
-from mainframe.service.daemon import LOCK_HELD_EXIT, Daemon, lock_path
-from mainframe.service.discovery import SUPERVISOR_PID_ENV, probe, read_discovery
+from mainframe.service.discovery import LOCK_HELD_EXIT, SUPERVISOR_PID_ENV, lock_path, probe, read_discovery
 
 DOWN_EXIT = 2
 DOWN_WAIT_SECONDS = 30          # fallback only: service.shutdown_timeout_seconds is the real bound
@@ -139,6 +138,7 @@ def run_offline_rebuild(config: dict, app=None) -> dict:
     """THE rebuild. It drops the table, so it never runs while the daemon is
     serving readers: this takes `.daemon.lock` itself, which is the exclusion —
     there is no queue to serialize on because there is no daemon."""
+    from mainframe.service.daemon import Daemon
     d = Daemon(config, app=app)
     if not d.acquire():
         print(f"mainframe: a rebuild runs offline only and the daemon holds {lock_path(config)}; "
@@ -498,8 +498,10 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
     c = sub.add_parser("capture"); c.add_argument("--file", required=True); c.add_argument("--project", required=True)
     c.add_argument("--title"); c.add_argument("--session-id", default="")
     h = sub.add_parser("hook", help="agent-host hook entry points (event JSON on stdin; always exits 0)")
-    h.add_subparsers(dest="event", required=True).add_parser(
-        "session-end", help="Claude Code SessionEnd: extractive capture of the transcript into the capture lane")
+    # A free-form name, not subcommands: argparse exits 2 on an unknown
+    # choice, and a PreCompact hook that exits 2 blocks the compaction.
+    h.add_argument("event", nargs="?", default="session-end",
+                   help="session-end (Claude Code SessionEnd) or pre-compact (PreCompact); only labels hook.log")
     v = sub.add_parser("validate", help="run live synthetic smoke/soak checks in new state outside Git")
     v.add_argument("--output", required=True, help="new directory outside Git for state, credentials, and reports")
     v.add_argument("--duration", type=float, default=0, help="observation seconds; 0 runs smoke checks and restart")
@@ -510,8 +512,8 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
     if args.cmd == "hook":
         # Before load_config: a hook runs inside session teardown, so even a
         # malformed config is a hook.log line there, never a traceback here.
-        from mainframe.adapters.session_end import main as session_end_main
-        return session_end_main(config=config)
+        from mainframe.adapters.capture_hook import main as capture_hook_main
+        return capture_hook_main(config=config, hook=args.event)
     config = config or load_config()
 
     if args.cmd == "validate":

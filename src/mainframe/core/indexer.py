@@ -20,7 +20,6 @@ from mainframe.core.device import is_device_failure
 from mainframe.core.hashing import content_hash, file_hash
 from mainframe.core.paths import chunk_key, doc_id
 from mainframe.core.secrets import scrub_secrets
-from mainframe.core.store import DocRows
 from mainframe.memory.frontmatter import split as split_frontmatter
 
 logger = logging.getLogger(__name__)
@@ -31,6 +30,16 @@ class LaneFile:
     path: str      # canonical
     lane: str      # "knowledge" | "capture"
     project: str
+
+
+@dataclass
+class DocRows:
+    """One document's rows for `Store.upsert_batch`. Defined here, by its
+    producer, so a module that only names lanes (the capture hook) does not
+    import lancedb."""
+    doc_id: str
+    doc_path: str
+    rows: list  # full-schema dicts; empty for a file that chunks to nothing
 
 
 @dataclass(frozen=True)

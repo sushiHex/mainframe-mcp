@@ -77,13 +77,6 @@ class IndexStaleError(RuntimeError):
 
 
 @dataclass
-class DocRows:
-    doc_id: str
-    doc_path: str
-    rows: list  # full-schema dicts; empty for a file that chunks to nothing
-
-
-@dataclass
 class BatchResult:
     upserted_rows: int
     docs: int

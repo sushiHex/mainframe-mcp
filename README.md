@@ -134,7 +134,16 @@ mainframe down
 
 Captures live in the configured state directory (`~/.claude/mainframe/captures/` by default) and are indexed asynchronously. Ordinary search excludes them; `--sessions` includes them. `down` finishes active work and stops the daemon to release its model memory. See the [daemon guide](docs/V2.md) for startup automation, diagnostics, and offline rebuilding.
 
-Claude Code can capture every session automatically: register `mainframe hook session-end` as a `SessionEnd` hook (it reads the hook's JSON on stdin, needs no running daemon and no GPU, always exits 0, and logs each decision to `<state dir>/hook.log`). The `capture` config section gates it: `min_prompts`, `exclude_projects`, `daily_cap` (captures beyond it go to `overflow/`), `max_transcript_bytes`. A session the agent already saved with the `capture` tool is skipped.
+Claude Code can capture sessions automatically. A capture covers one segment of a session: what happened since its last compaction. Register two hooks: `mainframe hook pre-compact` as a `PreCompact` hook (the segment a compaction is about to summarize) and `mainframe hook session-end` as a `SessionEnd` hook (the last segment). Each reads the hook's JSON on stdin, needs no running daemon and no GPU, starts in well under SessionEnd's 1.5 s default timeout, always exits 0, and logs each decision to `<state dir>/hook.log`.
+
+```json
+"hooks": {
+  "PreCompact": [{"hooks": [{"type": "command", "command": "mainframe hook pre-compact", "timeout": 30}]}],
+  "SessionEnd": [{"hooks": [{"type": "command", "command": "mainframe hook session-end", "timeout": 30}]}]
+}
+```
+
+The `capture` config section gates them: `min_prompts`, `exclude_projects`, `daily_cap` (captures beyond it go to `overflow/`), `max_transcript_bytes` (a longer segment is read as its head and tail). A segment the agent already saved with the `capture` tool is skipped, and so is one already captured.
 
 On Windows, run `mainframe install-task` once (no elevated shell needed) for a windowless daemon that starts at logon, then `mainframe up`. Set `service.prewarm: true` to load the models at start; `up` then returns once the daemon is ready, and they hold about 3.7 GB of VRAM until `mainframe reload` releases them.
 

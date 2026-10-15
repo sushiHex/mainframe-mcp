@@ -1,7 +1,9 @@
+import os
 from datetime import datetime
 
 import pytest
 
+from mainframe.memory.atomic import create_exclusive
 from mainframe.memory.capture import KINDS, write_capture
 from mainframe.memory.frontmatter import split
 from mainframe.memory.lanes import ADHOC_PROJECT, Lanes, capture_id_of
@@ -47,3 +49,20 @@ def test_write_capture_rejects_bad_project_and_kind(cfg):
     with pytest.raises(ValueError):
         write_capture(Lanes(cfg), "x", "t", project="p", kind="poem")
     assert KINDS == ("session", "decision", "note")
+
+
+def test_create_exclusive_leaves_no_tmp_and_counts_collisions(tmp_path):
+    a = create_exclusive(tmp_path, "base", text="one")
+    b = create_exclusive(tmp_path, "base", text="two")
+    assert (a.name, b.name) == ("base.md", "base-2.md")
+    assert (a.read_text(encoding="utf-8"), b.read_text(encoding="utf-8")) == ("one", "two")
+    assert not list(tmp_path.glob("*.tmp")) and not list(tmp_path.glob(".*.tmp"))
+
+
+def test_create_exclusive_failure_leaves_neither_capture_nor_tmp(tmp_path, monkeypatch):
+    def boom(fd):
+        raise OSError("disk full")
+    monkeypatch.setattr(os, "fsync", boom)
+    with pytest.raises(OSError):
+        create_exclusive(tmp_path, "base", text="x")
+    assert list(tmp_path.iterdir()) == []
