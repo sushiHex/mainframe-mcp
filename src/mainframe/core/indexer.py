@@ -70,23 +70,11 @@ UNCHANGED = _Unchanged()
 VANISHED = _Vanished()
 
 
-def prepare_document(lf: LaneFile, chunk_cfg: dict, embed, known_hash: str | None = None,
-                     contextualizer=None, now: str | None = None):
-    try:
-        text = Path(lf.path).read_text(encoding="utf-8")
-    except FileNotFoundError:
-        # Lane resolution and reading cannot be atomic: a watcher can queue a
-        # path just before it is deleted. This is a deletion, not a malformed
-        # document; the pipeline removes any old rows in the same batch.
-        return VANISHED
-    except (OSError, UnicodeDecodeError) as e:
-        return DocFailure(lf.path, f"read: {e}")
-    fh = file_hash(text)
-    if known_hash is not None and known_hash == fh:
-        return UNCHANGED
-    did = doc_id(lf.path)
-    # Read from the file as written: the scrub below can span the closing fence.
-    kind = declared_kind(text) if lf.lane == CAPTURE_LANE else "session"
+def chunk_document(lf: LaneFile, text: str, chunk_cfg: dict) -> tuple[list, str]:
+    """The chunking half of `prepare_document`: (chunks, the text they were cut
+    from), with offsets absolute in `text`. A rescan calls this to compare
+    stored rows with what the chunker produces TODAY, so the comparison cannot
+    drift from indexing."""
     if lf.lane == CAPTURE_LANE:
         # Choke-point scrub: every capture-lane chunk is scrubbed before it can
         # be embedded or searched, regardless of which writer produced the file.
@@ -104,18 +92,39 @@ def prepare_document(lf: LaneFile, chunk_cfg: dict, embed, known_hash: str | Non
     else:
         body = text
     body_offset = len(text) - len(body)
-    try:
-        chunks = chunk_markdown(body, max_tokens=chunk_cfg.get("chunk_size", 256),
-                                overlap_ratio=chunk_cfg.get("overlap_ratio", 0.35),
-                                drop_headings=chunk_cfg.get("drop_headings"))
-    except Exception as e:
-        return DocFailure(lf.path, f"chunk: {e}")
-    if not chunks:
-        return DocRows(doc_id=did, doc_path=lf.path, rows=[])
+    chunks = chunk_markdown(body, max_tokens=chunk_cfg.get("chunk_size", 256),
+                            overlap_ratio=chunk_cfg.get("overlap_ratio", 0.35),
+                            drop_headings=chunk_cfg.get("drop_headings"))
     if body_offset:
         for c in chunks:
             c.char_start += body_offset
             c.char_end += body_offset
+    return chunks, body
+
+
+def prepare_document(lf: LaneFile, chunk_cfg: dict, embed, known_hash: str | None = None,
+                     contextualizer=None, now: str | None = None):
+    try:
+        text = Path(lf.path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        # Lane resolution and reading cannot be atomic: a watcher can queue a
+        # path just before it is deleted. This is a deletion, not a malformed
+        # document; the pipeline removes any old rows in the same batch.
+        return VANISHED
+    except (OSError, UnicodeDecodeError) as e:
+        return DocFailure(lf.path, f"read: {e}")
+    fh = file_hash(text)
+    if known_hash is not None and known_hash == fh:
+        return UNCHANGED
+    did = doc_id(lf.path)
+    # Read from the file as written: the scrub in `chunk_document` can span the closing fence.
+    kind = declared_kind(text) if lf.lane == CAPTURE_LANE else "session"
+    try:
+        chunks, body = chunk_document(lf, text, chunk_cfg)
+    except Exception as e:
+        return DocFailure(lf.path, f"chunk: {e}")
+    if not chunks:
+        return DocRows(doc_id=did, doc_path=lf.path, rows=[])
     if contextualizer is not None and getattr(contextualizer, "enabled", False):
         try:
             contexts = contextualizer.contextualize(body, [c.text for c in chunks])

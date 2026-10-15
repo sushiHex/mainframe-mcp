@@ -13,6 +13,7 @@ import json
 
 import pytest
 
+from mainframe.core.chunker import CHUNKER_REVISION
 from mainframe.core.store import INDEX_DIRNAME, IndexStaleError, Store
 from v2.test_store import _rows
 
@@ -30,7 +31,7 @@ def _fp(**over) -> dict:
 
 def test_creating_a_table_writes_the_marker(tmp_path):
     s = Store(db_path=tmp_path / "db", embedding_dim=64, fingerprint=_fp())
-    assert _marker(s) == {"format_version": 1, "fingerprint": _fp()}
+    assert _marker(s) == {"format_version": 1, "fingerprint": _fp(), "chunker_revision": CHUNKER_REVISION}
     assert s.config_drift == {}
 
 
@@ -210,3 +211,58 @@ def test_status_surfaces_config_drift(cfg, tmp_path, fake_embedder):
     cfg["chunker"]["chunk_size"] = 384
     app = Mainframe(cfg, models=fake_models(cfg), events=EventStore(tmp_path / "ev.db"))
     assert app.status()["index"]["config_drift"] == {"chunk_size": [256, 384]}
+
+
+# ---- the chunker revision rides in the marker, outside the fingerprint (#80) ----
+
+def test_a_new_table_records_the_current_chunker_revision(tmp_path):
+    """Deliberately NOT absent: every row of a new table comes from the current
+    chunker, so the first rescan has nothing to re-chunk."""
+    from mainframe.core.chunker import CHUNKER_REVISION
+    s = Store(db_path=tmp_path / "db", embedding_dim=64, fingerprint=_fp())
+    assert s.chunker_revision() == CHUNKER_REVISION == _marker(s)["chunker_revision"]
+
+
+def test_an_absent_chunker_revision_is_revision_one(tmp_path):
+    s = Store(db_path=tmp_path / "db", embedding_dim=64, fingerprint=_fp())
+    s._marker_path().write_text(json.dumps({"format_version": 1, "fingerprint": _fp()}), encoding="utf-8")
+    assert s.chunker_revision() == 1
+    s._write_marker()                       # a rewrite does not invent one
+    assert "chunker_revision" not in _marker(s)
+
+
+def test_recording_a_chunker_revision_survives_a_reopen_without_touching_the_fingerprint(tmp_path, fake_embedder):
+    s = Store(db_path=tmp_path / "db", embedding_dim=64, fingerprint=_fp())
+    s.upsert_batch([_rows(fake_embedder, "c:/r/p/docs/a.md", ["alpha"])])
+    s.record_chunker_revision(2)
+    assert _marker(s) == {"format_version": 1, "fingerprint": _fp(), "chunker_revision": 2}
+    reopened = Store(db_path=tmp_path / "db", embedding_dim=64, fingerprint=_fp())
+    assert reopened.chunker_revision() == 2 and reopened.config_drift == {}
+
+
+def test_recording_a_revision_does_not_launder_drift(tmp_path, fake_embedder):
+    """The marker keeps the settings that BUILT the rows; recording a revision
+    must not overwrite them with today's."""
+    s = Store(db_path=tmp_path / "db", embedding_dim=64, fingerprint=_fp())
+    s.upsert_batch([_rows(fake_embedder, "c:/r/p/docs/a.md", ["alpha"])])
+    changed = Store(db_path=tmp_path / "db", embedding_dim=64, fingerprint=_fp(chunk_size=512))
+    changed.record_chunker_revision(2)
+    assert _marker(changed)["fingerprint"]["chunk_size"] == 256
+    assert Store(db_path=tmp_path / "db", embedding_dim=64,
+                 fingerprint=_fp(chunk_size=512)).config_drift == {"chunk_size": [256, 512]}
+
+
+def test_rewriting_the_marker_keeps_the_chunker_revision(tmp_path, fake_embedder):
+    s = Store(db_path=tmp_path / "db", embedding_dim=64, fingerprint=_fp())
+    s.upsert_batch([_rows(fake_embedder, "c:/r/p/docs/a.md", ["alpha"])])
+    s.record_chunker_revision(2)
+    s._write_marker()
+    assert s.chunker_revision() == 2
+    s.drop()                                  # a rebuild rewrites the marker too
+    assert s.chunker_revision() == 2 and _marker(s)["fingerprint"] == _fp()
+
+
+def test_a_damaged_marker_reads_as_revision_one(tmp_path):
+    s = Store(db_path=tmp_path / "db", embedding_dim=64, fingerprint=_fp())
+    s._marker_path().write_text("{not json", encoding="utf-8")
+    assert s.chunker_revision() == 1
