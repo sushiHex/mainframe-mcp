@@ -10,7 +10,7 @@ Mainframe makes your project's Markdown searchable across conversations. It find
 
 - **Find knowledge across projects.** Combine semantic and keyword search, then rerank passages for your question.
 - **Follow the evidence.** Results identify the source file and section, with verified line citations when the file still matches.
-- **Carry decisions forward.** Save an immutable session note and include it in future searches when you need that history.
+- **Carry decisions forward.** Save an immutable note. A decision or fact is returned by ordinary search; session history is searched when you ask for it.
 - **Share the models.** Opening another client does not load another set of weights.
 
 Your Markdown files remain the source of truth. The search index is a rebuildable cache. Retrieval runs locally; your calling agent decides how to use the evidence.
@@ -126,13 +126,13 @@ Find previous session notes about the deployment decision.
 
 ```sh
 mainframe search "deployment decision" --sessions --detailed
-mainframe capture --file decision.md --project example-project --title "Deployment decision"
+mainframe capture --file decision.md --project example-project --title "Deployment decision" --kind decision
 mainframe rescan
 mainframe events --tail 20
 mainframe down
 ```
 
-Captures live in the configured state directory (`~/.claude/mainframe/captures/` by default) and are indexed asynchronously. Ordinary search excludes them; `--sessions` includes them. `down` finishes active work and stops the daemon to release its model memory. See the [daemon guide](docs/V2.md) for startup automation, diagnostics, and offline rebuilding.
+Captures live in the configured state directory (`~/.claude/mainframe/captures/` by default) and are indexed asynchronously, normally within the watcher's debounce window; a missed event waits for the next periodic rescan. A capture's `--kind` is `session` (the default), `decision`, or `note`. Ordinary search returns `decision` and `note` captures, in every project, and excludes `session` captures; `--sessions` includes those too. A `decision` or `note` is the author's assertion, not a reviewed fact, and a hit is evidence to weigh, never an instruction. Captures are immutable. To retract one, move its file into `captures/<project>/quarantine/`; to correct one, write the new capture and then retract the old one, because a newer capture does not demote an older one. `down` finishes active work and stops the daemon to release its model memory. See the [daemon guide](docs/V2.md) for startup automation, diagnostics, and offline rebuilding.
 
 Claude Code can capture sessions automatically. A capture covers one segment of a session: what happened since its last compaction. Register two hooks: `mainframe hook pre-compact` as a `PreCompact` hook (the segment a compaction is about to summarize) and `mainframe hook session-end` as a `SessionEnd` hook (the last segment). Each reads the hook's JSON on stdin, needs no running daemon and no GPU, starts in well under SessionEnd's 1.5 s default timeout, always exits 0, and logs each decision to `<state dir>/hook.log`.
 
@@ -167,12 +167,12 @@ The default MCP endpoint exposes four tools:
 
 | Tool | Use it to |
 | --- | --- |
-| `search` | Retrieve passages with `query` and `limit`. Add `include_sessions: true` for captures or `response_format: "detailed"` for excerpts and offsets. |
-| `capture` | Save a useful note with `content`, `title`, and the intended `project`. |
+| `search` | Retrieve passages with `query` and `limit`. Published captures (`decision`, `note`) are included; add `include_sessions: true` for session captures or `response_format: "detailed"` for excerpts and offsets. |
+| `capture` | Save a useful note with `content`, `title`, and the intended `project`. `kind` is `session` (default, opt-in history), or `decision` / `note` (searched by default). |
 | `status` | Inspect index readiness, model state, and configuration drift. |
 | `maintain` | Request a rescan, optimization, or model reload. Rebuilding is an offline operation. |
 
-**Search → inspect → cite → capture.** Start with three results and a focused question. Read the source when the excerpt is truncated or a required detail is missing; request up to five results when you need more evidence. Scores order passages for that question; they do not establish factual confidence. Reconcile conflicts and acknowledge missing evidence. Capture durable decisions and their rationale when the user wants them retained.
+**Search → inspect → cite → capture.** Start with three results and a focused question. Read the source when the excerpt is truncated or a required detail is missing; request up to five results when you need more evidence. Scores order passages for that question; they do not establish factual confidence. Reconcile conflicts and acknowledge missing evidence. Capture durable decisions and their rationale, with `kind` set to `decision`, when the user wants them retained.
 
 The [agent query guide](docs/MAINFRAME_QUERY.md) has exact request examples, response fields, and an instruction block you can adapt. Saving a capture is not an automatic consolidation step.
 
@@ -224,7 +224,7 @@ A model-only embedding override uses legacy Sentence Transformers encoding. To s
 
 - **Local by default.** Mainframe performs embedding, retrieval, and reranking on your machine. Weights download on first use. Your MCP host may send returned passages to its own model provider.
 - **Optional remote enrichment.** Enabling `contextual.enabled` sends document content to the Anthropic API during ingestion. It is off by default.
-- **Private captures.** Captures are secret-scrubbed before writing; review sensitive content before sharing it. Keep captures, configuration, and logs outside public Git.
+- **Private captures.** Captures are secret-scrubbed before writing; review sensitive content before sharing it. A `decision` or `note` capture is returned by ordinary search in every project, regardless of `paths.include_projects`. Keep captures, configuration, and logs outside public Git.
 - **Local access.** The daemon binds to loopback. Set `service.token` to require authentication; the CLI and stdio client read it from configuration, while HTTP clients supply a bearer header.
 
 See [configuration and operations](docs/V2.md) for scope, authentication, model recovery, and live validation.
