@@ -1,5 +1,5 @@
 """Configuration — single source of truth for models, lanes, index, capture,
-memory, and service knobs. The top-level model sections are the shape the
+and service knobs. The top-level model sections are the shape the
 shipped presets and existing config files already use."""
 
 import json
@@ -70,10 +70,18 @@ DEFAULTS = {
               "optimize_versions": 20, "optimize_fragments": 10, "optimize_cooldown_seconds": 900},
     "capture": {"exclude_projects": [], "min_prompts": 2, "daily_cap": 20,
                 "max_transcript_bytes": 8 * 1024 * 1024},
-    "memory": {"threshold": 5, "settle_minutes": 30, "check_interval_minutes": 5,
-               "vram_footprint_gb": 3.5, "vram_margin_gb": 1.5, "char_budget": 80_000},
     "contextual": {"enabled": False, "model": "claude-haiku-4-5"},
 }
+
+# Keys whose reader is gone (the consolidation `memory.*` block, #82) but which
+# a live config may still set: accepted, ignored, and named once in the log.
+# Delete the set one release after it ships; the keys then refuse like any
+# other unknown one. `memory.consolidate_threshold` is deliberately absent.
+DEPRECATED_KEYS = frozenset({
+    "memory.threshold", "memory.settle_minutes", "memory.check_interval_minutes",
+    "memory.vram_footprint_gb", "memory.vram_margin_gb", "memory.char_budget",
+})
+_WARNED_DEPRECATED: set[str] = set()
 
 _ENV_OVERRIDES = {
     "MAINFRAME_EMBEDDER_MODEL": ("embedder", "model", str),
@@ -143,6 +151,17 @@ def _deep_merge(base: dict, override: dict, source: str = "", prefix: str = "") 
     for key, val in override.items():
         path = f"{prefix}{key}"
         if source and key not in base and not key.startswith("_"):
+            if path in DEPRECATED_KEYS:
+                if path not in _WARNED_DEPRECATED:
+                    _WARNED_DEPRECATED.add(path)
+                    logger.warning(f"config key {path!r} in {source} is deprecated: nothing reads it, "
+                                   "so it is ignored. Delete it; a later release refuses it.")
+                continue
+            if isinstance(val, dict) and any(d.startswith(f"{path}.") for d in DEPRECATED_KEYS):
+                # A removed section: check its keys against the deprecated set
+                # alone, so a sibling that was never valid still refuses.
+                _deep_merge({}, val, source, f"{path}.")
+                continue
             raise ConfigError(
                 f"unknown config key {path!r} in {source}: nothing reads it, so it would be "
                 f"silently ignored. Known keys here: {', '.join(sorted(base)) or '(none)'}")
