@@ -148,6 +148,36 @@ def test_a_legacy_client_still_works(cfg, store, tmp_path):
         assert rpc(c, "/mcp", "server/discover")["error"]["code"] == -32601
 
 
+def test_a_modern_tool_call_is_served(cfg, store, tmp_path):
+    c, _ = _client(cfg, store, tmp_path)
+    with c:
+        body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "search", "arguments": {"query": "qwen3 reranker"},
+            "_meta": {_META + "protocolVersion": "2026-07-28", _META + "clientInfo": {"name": "t", "version": "0"},
+                      _META + "clientCapabilities": {}}}}
+        r = c.post("/mcp/ro", content=json.dumps(body),
+                   headers={**HEADERS, **MODERN, "mcp-method": "tools/call", "mcp-name": "search"})
+        payload = json.loads(r.json()["result"]["content"][0]["text"])
+        assert payload["results"][0]["file"].endswith("a.md")
+
+
+def test_a_tool_failure_reaches_the_client_with_its_remedy(cfg, store, tmp_path, monkeypatch):
+    """SDK 2.x reports an unexpected exception as only "Error executing tool
+    <name>"; the remedy a client acts on must survive, as it does over REST."""
+    from mainframe.core.store import IndexStaleError
+    c, app = _client(cfg, store, tmp_path)
+
+    def stale(*a, **k):
+        raise IndexStaleError("rows were built under another embedder")
+
+    monkeypatch.setattr(app, "search", stale)
+    with c:
+        res = rpc(c, "/mcp", "tools/call", {"name": "search", "arguments": {"query": "x"}})["result"]
+        text = res["content"][0]["text"]
+        assert res["isError"] is True
+        assert "another embedder" in text and "`mainframe rebuild`" in text
+
+
 def test_mount_runs_extra_routes_and_hooks(cfg, store, tmp_path):
     """The ONE lifespan serves the daemon's extra routes and runs its hooks —
     and `on_shutdown` still runs when `on_startup` blows up half-way."""

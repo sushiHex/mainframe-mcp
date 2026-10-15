@@ -16,8 +16,9 @@ dependencies = [
     "transformers>=5.7.0",
     "packaging>=23",
     # MCPServer (2.x): stateless HTTP answering both `server/discover`
-    # (protocol 2026-07-28) and `initialize`.
-    "mcp>=2.3,<3",
+    # (protocol 2026-07-28) and `initialize`. One minor line: 2.x minors change
+    # routing and serialization behaviour, so each is an upgrade with tests.
+    "mcp>=2.3,<2.4",
     "tantivy>=0.22",
     # Store's projected reads (dedup hash scans, stats) go through
     # table.to_lance() — lancedb does NOT pull pylance in on its own, and

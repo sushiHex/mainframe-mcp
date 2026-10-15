@@ -5,9 +5,12 @@ blocking work to a thread so /healthz and /shutdown stay responsive."""
 
 import asyncio
 import contextlib
+import functools
+import logging
 from urllib.parse import urlsplit
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
@@ -17,9 +20,39 @@ from mainframe import __version__
 from mainframe.app import JOBS
 from mainframe.core.store import IndexStaleError
 
+logger = logging.getLogger(__name__)
 READ_ONLY = ToolAnnotations(readOnlyHint=True)
 _MAINTAIN_GUIDANCE = (f"action: one of {', '.join(JOBS)}; "
                       "project: a plain repo name (no separators, no leading dot)")
+
+
+def describe_failure(exc: Exception) -> tuple[int, dict]:
+    """(HTTP status, {error, guidance}) for a failure no handler translated:
+    ONE description for REST and MCP.
+
+    A stale index is a 409: the request was well formed and the server is
+    healthy, but its state conflicts with the settings now configured, and the
+    remedy is a specific operator action. A model still in its load backoff
+    says "unavailable" and is a 503 (retry later); everything else is a 500."""
+    if isinstance(exc, IndexStaleError):
+        return 409, {"error": str(exc), "guidance": "`mainframe down`, then `mainframe rebuild`"}
+    status = 503 if "unavailable" in str(exc).lower() else 500
+    return status, {"error": str(exc), "guidance": "check `mainframe status` and daemon.log"}
+
+
+def _reported(tool):
+    """A tool failure reaches the client with its remedy. MCP SDK 2.x reports
+    an exception it did not expect as only "Error executing tool <name>",
+    which hides exactly what a client acts on: rebuild, or retry later."""
+    @functools.wraps(tool)
+    async def run(*args, **kwargs):
+        try:
+            return await tool(*args, **kwargs)
+        except Exception as exc:
+            _, body = describe_failure(exc)
+            logger.warning("MCP tool %s failed: %s", tool.__name__, exc)
+            raise ToolError(f"{body['error']} -- {body['guidance']}") from exc
+    return run
 
 
 def _register(mcp: MCPServer, app, read_only: bool):
@@ -31,6 +64,7 @@ def _register(mcp: MCPServer, app, read_only: bool):
                            "results, or the reranker is disabled; rerank_score is then 0.0 for every result "
                            "and reflects candidate order only). response_format: concise (default) "
                            "or detailed. Session captures are excluded unless include_sessions=true."))
+    @_reported
     async def search(query: str, limit: int = 3, include_sessions: bool = False, response_format: str = "concise") -> dict:
         return await asyncio.to_thread(app.search, query, limit, include_sessions, response_format)
 
@@ -39,6 +73,7 @@ def _register(mcp: MCPServer, app, read_only: bool):
                   description=("Write one immutable, secret-scrubbed session note into the capture lane "
                                "(indexed automatically; excluded from default search). Author dense markdown "
                                "sections: ## Summary, ## Decisions, ## Action items, ## Key facts."))
+        @_reported
         async def capture(content: str, title: str, project: str | None = None, session_id: str = "",
                           kind: str = "session", cwd: str = "") -> dict:
             try:
@@ -49,6 +84,7 @@ def _register(mcp: MCPServer, app, read_only: bool):
 
     @mcp.tool(name="status", annotations=READ_ONLY,
               description="Daemon health: models, VRAM, index rows/versions/indexes, pending captures, recent events.")
+    @_reported
     async def status() -> dict:
         return await asyncio.to_thread(app.status)
 
@@ -58,6 +94,7 @@ def _register(mcp: MCPServer, app, read_only: bool):
                                "optimize (compact), reload (drop the resident models so the next use "
                                "reloads them — for a GPU fault that survives a retry). A full rebuild is "
                                "offline only: `mainframe down` then `mainframe rebuild`."))
+        @_reported
         async def maintain(action: str, project: str | None = None) -> dict:
             try:
                 return await asyncio.to_thread(app.maintain, action, project)
@@ -72,9 +109,11 @@ HTTP_TRANSPORT = {"stateless_http": True, "json_response": True, "streamable_htt
 
 
 def _server(name: str) -> MCPServer:
-    # The SDK configures the ROOT logger (a console handler) at this level;
+    # subscriptions=False: `subscriptions/listen` is the one 2.x method that
+    # streams SSE despite json_response, and there is nothing to subscribe to.
+    # log_level: the SDK configures the ROOT logger (a console handler) at it;
     # INFO was a "Processing request" line per call in daemon.out.
-    return MCPServer(name, version=__version__, log_level="WARNING")
+    return MCPServer(name, version=__version__, log_level="WARNING", subscriptions=False)
 
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "[::1]"})
@@ -154,20 +193,11 @@ def build_mcp(app):
 
 
 def _unhandled(_request, exc: Exception) -> JSONResponse:
-    """Anything a handler did not translate, as the documented error shape.
-
-    A stale index is a 409: the request was well formed and the server is
-    healthy, but its state conflicts with the settings now configured, and the
-    remedy is a specific operator action. Without this the carefully written
-    "stop the daemon and run `mainframe rebuild`" reached only the log while
-    REST answered an opaque 500. A model still in its load backoff says
-    "unavailable" and is a 503 (retry later); everything else is a 500."""
-    if isinstance(exc, IndexStaleError):
-        return JSONResponse({"error": str(exc), "guidance": "`mainframe down`, then `mainframe rebuild`"},
-                            status_code=409)
-    status = 503 if "unavailable" in str(exc).lower() else 500
-    return JSONResponse({"error": str(exc), "guidance": "check `mainframe status` and daemon.log"},
-                        status_code=status)
+    """Anything a REST handler did not translate, as the documented error shape
+    (without this, "stop the daemon and run `mainframe rebuild`" reached only
+    the log while REST answered an opaque 500)."""
+    status, body = describe_failure(exc)
+    return JSONResponse(body, status_code=status)
 
 
 def mount(full: MCPServer, ro: MCPServer, extra_routes=None, on_startup=None, on_shutdown=None) -> Starlette:
