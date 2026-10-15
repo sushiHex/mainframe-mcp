@@ -6,6 +6,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
+from mainframe import __version__
 from mainframe.adapters.mcp_server import build_mcp, mount
 from mainframe.app import Mainframe
 from mainframe.service.events import EventStore
@@ -27,7 +28,7 @@ def _client(cfg, store, tmp_path):
     write_md(Path(cfg["paths"]["repos_dir"]) / "p" / "docs" / "a.md", "# T\n\nqwen3 reranker text.\n")
     app.submit("rescan")
     full, ro = build_mcp(app)
-    # FastMCP's default transport security (DNS-rebinding protection) allows
+    # MCPServer's default transport security (DNS-rebinding protection) allows
     # only Host headers of the form "127.0.0.1:<port>" (httpx normalizes away
     # a bare default-port URL's port, so a portless base_url produces a Host
     # header of "127.0.0.1" and is rejected with 421) — give TestClient an
@@ -106,6 +107,45 @@ def test_bare_mount_paths_work_without_redirect(cfg, store, tmp_path):
             assert r.status_code == 200, r.text
             assert r.history == []
             assert [t["name"] for t in r.json()["result"]["tools"]] == expected
+
+
+_META = "io.modelcontextprotocol/"
+MODERN = {"mcp-protocol-version": "2026-07-28"}
+
+
+def modern_rpc(client, path, method, params=None, id=1):
+    """A 2026-07-28 request: routed by the headers, versioned by `params._meta`."""
+    meta = {_META + "protocolVersion": "2026-07-28",
+            _META + "clientInfo": {"name": "t", "version": "0"},
+            _META + "clientCapabilities": {}}
+    body = {"jsonrpc": "2.0", "id": id, "method": method, "params": {**(params or {}), "_meta": meta}}
+    r = client.post(path, content=json.dumps(body), headers={**HEADERS, **MODERN, "mcp-method": method})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_a_modern_client_is_answered_on_both_mounts(cfg, store, tmp_path):
+    c, _ = _client(cfg, store, tmp_path)
+    with c:
+        for path, name in (("/mcp", "mainframe"), ("/mcp/ro", "mainframe-ro")):
+            res = modern_rpc(c, path, "server/discover")["result"]
+            assert "2026-07-28" in res["supportedVersions"]
+            assert "tools" in res["capabilities"]
+            assert res["_meta"][_META + "serverInfo"] == {"name": name, "version": __version__}
+        tools = modern_rpc(c, "/mcp/ro", "tools/list")["result"]["tools"]
+        assert [t["name"] for t in tools] == ["search", "status"]
+
+
+def test_a_legacy_client_still_works(cfg, store, tmp_path):
+    c, _ = _client(cfg, store, tmp_path)
+    with c:
+        res = rpc(c, "/mcp", "initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                            "clientInfo": {"name": "t", "version": "0"}})["result"]
+        assert res["protocolVersion"] == "2025-06-18"
+        assert res["serverInfo"]["version"] == __version__
+        # Without the era headers server/discover is legacy-routed: the refusal a
+        # stdio client falls back from.
+        assert rpc(c, "/mcp", "server/discover")["error"]["code"] == -32601
 
 
 def test_mount_runs_extra_routes_and_hooks(cfg, store, tmp_path):

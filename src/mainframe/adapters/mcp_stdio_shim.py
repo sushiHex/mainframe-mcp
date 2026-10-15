@@ -9,6 +9,7 @@ from mainframe.config import load_config
 from mainframe.service.discovery import probe
 
 _HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+_PROTOCOL_VERSION_META = "io.modelcontextprotocol/protocolVersion"
 # ASCII: this line reaches a host's log, often through cp1252 on Windows.
 _NOT_RUNNING = "mainframed is not running - run `mainframe up`"
 
@@ -27,6 +28,19 @@ def _never_sent(exc) -> bool:
     """
     import httpx
     return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+
+
+def era_headers(msg: dict) -> dict:
+    """The headers Streamable HTTP uses to route a message by protocol era.
+    A stdio client never writes them: a modern (2026-07-28+) message carries
+    its version in `params._meta` instead, so stamp them from there, as an
+    HTTP client would. A legacy message gets none and stays legacy."""
+    params = msg.get("params")
+    meta = params.get("_meta") if isinstance(params, dict) else None
+    version = meta.get(_PROTOCOL_VERSION_META) if isinstance(meta, dict) else None
+    if not isinstance(version, str) or not isinstance(msg.get("method"), str):
+        return {}
+    return {"mcp-protocol-version": version, "mcp-method": msg["method"]}
 
 
 def forward(line: str, post):
@@ -110,8 +124,18 @@ def make_post(config, http=None):
 
     def _send(body):
         try:
-            r = _http().post(state["base"], content=json.dumps(body), headers=state["headers"])
-            r.raise_for_status()
+            r = _http().post(state["base"], content=json.dumps(body), headers={**state["headers"], **era_headers(body)})
+            if r.status_code >= 400:
+                # A JSON-RPC answer at an error status (a modern server refuses
+                # an era or version with a 4xx that names its versions) is the
+                # client's to read; only a bare HTTP failure is the shim's.
+                try:
+                    payload = r.json()
+                except ValueError:
+                    payload = None
+                if not (isinstance(payload, dict) and payload.get("jsonrpc") == "2.0"):
+                    r.raise_for_status()
+                return payload
             return r.json() if r.content else None
         except Exception:
             state["base"] = None      # an address stays cached only while it works

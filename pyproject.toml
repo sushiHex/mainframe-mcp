@@ -15,8 +15,9 @@ dependencies = [
     "sentence-transformers>=5.4.1",
     "transformers>=5.7.0",
     "packaging>=23",
-    # The daemon mounts `mcp.server.fastmcp` from the 1.x line.
-    "mcp>=1.0,<2",
+    # MCPServer (2.x): stateless HTTP answering both `server/discover`
+    # (protocol 2026-07-28) and `initialize`.
+    "mcp>=2.3,<3",
     "tantivy>=0.22",
     # Store's projected reads (dedup hash scans, stats) go through
     # table.to_lance() — lancedb does NOT pull pylance in on its own, and

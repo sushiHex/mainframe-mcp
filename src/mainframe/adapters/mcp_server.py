@@ -1,19 +1,19 @@
-"""MCP adapter: two FastMCP instances over ONE Mainframe —
+"""MCP adapter: two MCPServer instances over ONE Mainframe —
 `/mcp` (search, capture, status, maintain) and `/mcp/ro` (search, status) —
 stateless Streamable HTTP with JSON responses. Tools are async and offload
 blocking work to a thread so /healthz and /shutdown stay responsive."""
 
 import asyncio
 import contextlib
-import logging
 from urllib.parse import urlsplit
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Mount
 
+from mainframe import __version__
 from mainframe.app import JOBS
 from mainframe.core.store import IndexStaleError
 
@@ -22,7 +22,7 @@ _MAINTAIN_GUIDANCE = (f"action: one of {', '.join(JOBS)}; "
                       "project: a plain repo name (no separators, no leading dot)")
 
 
-def _register(mcp: FastMCP, app, read_only: bool):
+def _register(mcp: MCPServer, app, read_only: bool):
     @mcp.tool(name="search", annotations=READ_ONLY,
               description=("Search the Mainframe (semantic vector search, reranked; keyword matching is a "
                            "backstop, so an exact token is not guaranteed to match). Use SPECIFIC technical "
@@ -65,24 +65,16 @@ def _register(mcp: FastMCP, app, read_only: bool):
                 return {"error": str(e), "guidance": _MAINTAIN_GUIDANCE}
 
 
-class _DiscoverProbeNoise(logging.Filter):
-    """mcp 1.x does not know `server/discover`, the opening probe of the
-    2026-07-28 protocol. It answers with an error the client falls back from,
-    which is correct, and logs a ~17-line validation dump on root for each
-    probe. Drop exactly that record; the SDK 2.x port (#69) makes it moot."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        message = record.getMessage()
-        return not (message.startswith("Failed to validate request") and "server/discover" in message)
+# Stateless Streamable HTTP with JSON responses: the 2026-07-28 revision's
+# `server/discover` and the legacy `initialize` handshake are both answered.
+# JSON, not SSE, is what keeps api.TokenMiddleware (a BaseHTTPMiddleware) safe.
+HTTP_TRANSPORT = {"stateless_http": True, "json_response": True, "streamable_http_path": "/"}
 
 
-def _server(name: str) -> FastMCP:
-    root = logging.getLogger()
-    if not any(isinstance(f, _DiscoverProbeNoise) for f in root.filters):
-        root.addFilter(_DiscoverProbeNoise())
-    # The SDK configures the ROOT logger (a console handler) at log_level;
+def _server(name: str) -> MCPServer:
+    # The SDK configures the ROOT logger (a console handler) at this level;
     # INFO was a "Processing request" line per call in daemon.out.
-    return FastMCP(name, stateless_http=True, json_response=True, streamable_http_path="/", log_level="WARNING")
+    return MCPServer(name, version=__version__, log_level="WARNING")
 
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "[::1]"})
@@ -178,11 +170,11 @@ def _unhandled(_request, exc: Exception) -> JSONResponse:
                         status_code=status)
 
 
-def mount(full: FastMCP, ro: FastMCP, extra_routes=None, on_startup=None, on_shutdown=None) -> Starlette:
+def mount(full: MCPServer, ro: MCPServer, extra_routes=None, on_startup=None, on_shutdown=None) -> Starlette:
     """Parent app: `/mcp/ro` before `/mcp`; both session managers and the
     daemon's start/stop hooks run in ONE lifespan (mounted sub-app lifespans
     do not run on their own)."""
-    full_app, ro_app = full.streamable_http_app(), ro.streamable_http_app()
+    full_app, ro_app = full.streamable_http_app(**HTTP_TRANSPORT), ro.streamable_http_app(**HTTP_TRANSPORT)
 
     @contextlib.asynccontextmanager
     async def lifespan(_):
@@ -207,7 +199,7 @@ def mount(full: FastMCP, ro: FastMCP, extra_routes=None, on_startup=None, on_shu
     # would otherwise report as "could not reach the daemon". Starlette runs
     # this from ServerErrorMiddleware, so the JSON goes out and the exception
     # is still re-raised for the server's own log. (The MCP mounts are already
-    # safe: FastMCP turns a tool exception into an isError result.)
+    # safe: MCPServer turns a tool exception into an isError result.)
     app = Starlette(routes=routes, lifespan=lifespan, exception_handlers={Exception: _unhandled})
     # Starlette's Mount pattern for e.g. "/mcp/ro" only matches a request path
     # that ALREADY has a trailing "/mcp/ro/..." — a bare "/mcp/ro" (what a
