@@ -131,6 +131,12 @@ never shared with v2. If one is still on disk:
   unknown key, and the error names the key. Delete these from `config.json`
   if present: `reranker.top_k`, `chunker.min_section_tokens`,
   `search.fetch_multiplier`, `tiers.archive`, `memory.consolidate_threshold`.
+- The `memory` block (`threshold`, `settle_minutes`, `check_interval_minutes`,
+  `vram_footprint_gb`, `vram_margin_gb`, `char_budget`) belonged to the unbuilt
+  consolidation. Those six keys are still accepted but ignored, and the log
+  names each one set; delete them, because a later release refuses them. The
+  `consolidator` and `nli` sections stay: the validation harness, the offline
+  model check and the shipped presets still read them.
 - `MAINFRAME_READ_ONLY` and `MAINFRAME_PREWARM` were v1 variables; v2 uses
   the `/mcp/ro` endpoint and `service.prewarm`.
 

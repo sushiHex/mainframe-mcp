@@ -38,13 +38,13 @@ def test_gpu_presets_use_the_same_harrier_encoding(name):
 
 def test_defaults_have_required_sections():
     for key in ("paths", "service", "embedder", "reranker", "consolidator", "nli", "models",
-                "chunker", "search", "tiers", "index", "capture", "memory", "contextual"):
+                "chunker", "search", "tiers", "index", "capture", "contextual"):
         assert key in DEFAULTS, key
+    assert "memory" not in DEFAULTS      # retired with the unbuilt consolidation (#82)
     assert DEFAULTS["service"]["port"] == 7433 and DEFAULTS["service"]["prewarm"] is False
     assert DEFAULTS["index"]["cleanup_minutes"] == 120
     assert DEFAULTS["index"]["read_consistency_seconds"] == 30
     assert DEFAULTS["capture"]["daily_cap"] == 20 and DEFAULTS["capture"]["min_prompts"] == 2
-    assert DEFAULTS["memory"]["threshold"] == 5 and DEFAULTS["memory"]["vram_footprint_gb"] == 3.5
     assert DEFAULTS["search"]["candidate_pool"] == 20
     assert DEFAULTS["tiers"]["session"] == 1.05
     assert DEFAULTS["tiers"]["decision"] == DEFAULTS["tiers"]["note"] == DEFAULTS["tiers"]["research"]
@@ -221,6 +221,49 @@ def test_retired_v1_keys_are_refused_like_any_other_unknown_key(tmp_path, sectio
     stale.write_text(json.dumps({"_note": "a comment", section: {key: 3}}), encoding="utf-8")
     with pytest.raises(ConfigError, match=f"{section}.{key}"):
         load_config(stale)
+
+
+@pytest.fixture
+def fresh_deprecation_warnings(monkeypatch):
+    from mainframe import config as cfg_mod
+    monkeypatch.setattr(cfg_mod, "_WARNED_DEPRECATED", set())
+
+
+def test_a_removed_memory_key_still_starts_and_warns_once(tmp_path, caplog, fresh_deprecation_warnings):
+    """`memory.*` had no reader since the consolidation was dropped (#82), but a
+    live config may still set it: it starts, the key is ignored, and the log
+    names it once per process."""
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps({"memory": {"threshold": 9, "char_budget": 1}, "service": {"port": 8124}}),
+                   encoding="utf-8")
+    with caplog.at_level("WARNING", logger="mainframe.config"):
+        config = load_config(old)
+        load_config(old)                                   # a second load does not repeat it
+    assert config["service"]["port"] == 8124 and "memory" not in config
+    warned = [r.getMessage() for r in caplog.records if "deprecated" in r.getMessage()]
+    assert len(warned) == 2 and any("memory.threshold" in w for w in warned) \
+        and any("memory.char_budget" in w for w in warned)
+
+
+@pytest.mark.parametrize("key", ["threshold", "settle_minutes", "check_interval_minutes",
+                                 "vram_footprint_gb", "vram_margin_gb", "char_budget"])
+def test_every_removed_memory_key_is_accepted(tmp_path, fresh_deprecation_warnings, key):
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps({"memory": {key: 1}}), encoding="utf-8")
+    assert "memory" not in load_config(old)
+
+
+def test_a_deprecated_section_does_not_excuse_its_other_keys(tmp_path, fresh_deprecation_warnings):
+    """Only the six named keys are exempt: `memory.consolidate_threshold` and a
+    plain unknown key beside them still refuse."""
+    mixed = tmp_path / "mixed.json"
+    mixed.write_text(json.dumps({"memory": {"threshold": 5, "thresholds": 5}}), encoding="utf-8")
+    with pytest.raises(ConfigError, match="memory.thresholds"):
+        load_config(mixed)
+    unrelated = tmp_path / "unrelated.json"
+    unrelated.write_text(json.dumps({"memoryy": {"threshold": 5}}), encoding="utf-8")
+    with pytest.raises(ConfigError, match="memoryy"):
+        load_config(unrelated)
 
 
 def test_comments_are_tolerated_and_every_shipped_preset_passes_the_unknown_key_rule(tmp_path):
