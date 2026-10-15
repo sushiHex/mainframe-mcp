@@ -181,7 +181,7 @@ class Daemon:
     def build(self):
         """The ASGI app; its lifespan starts/stops the components (tests drive it
         with TestClient; production goes through serve()). Built fresh every
-        call: a FastMCP session manager can only be entered once."""
+        call: an MCP session manager can only be entered once."""
         full, ro = build_mcp(self.app)
         base = mount(full, ro, extra_routes=routes(self.app, self.stop),
                      on_startup=self._start, on_shutdown=self._stop)

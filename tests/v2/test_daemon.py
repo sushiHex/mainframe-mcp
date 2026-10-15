@@ -15,7 +15,7 @@ from v2.conftest import held
 from v2.fakes import fake_models
 from v2.helpers import write_md
 
-# FastMCP's transport security rejects a portless Host header, and httpx
+# MCPServer's transport security rejects a portless Host header, and httpx
 # normalizes away a default-port URL's port — so the base_url carries an
 # explicit (fictitious) port, exactly as tests/v2/test_mcp_server.py does.
 BASE = "http://127.0.0.1:8420"
@@ -122,7 +122,7 @@ def test_captured_by_is_scrubbed_on_every_surface(cfg, store, tmp_path):
 
 
 def test_host_header_must_be_loopback(cfg, store, tmp_path):
-    """FastMCP guards its own sub-apps, but /search, /capture, /jobs,
+    """MCPServer guards its own sub-apps, but /search, /capture, /jobs,
     /events and /shutdown are registered on the parent — with the default
     token=None a rebound DNS name reached /shutdown."""
     d = _daemon(cfg, store, tmp_path)

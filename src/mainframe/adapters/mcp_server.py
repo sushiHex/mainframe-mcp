@@ -1,28 +1,61 @@
-"""MCP adapter: two FastMCP instances over ONE Mainframe —
+"""MCP adapter: two MCPServer instances over ONE Mainframe —
 `/mcp` (search, capture, status, maintain) and `/mcp/ro` (search, status) —
 stateless Streamable HTTP with JSON responses. Tools are async and offload
 blocking work to a thread so /healthz and /shutdown stay responsive."""
 
 import asyncio
 import contextlib
+import functools
 import logging
 from urllib.parse import urlsplit
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Mount
 
+from mainframe import __version__
 from mainframe.app import JOBS
 from mainframe.core.store import IndexStaleError
 
+logger = logging.getLogger(__name__)
 READ_ONLY = ToolAnnotations(readOnlyHint=True)
 _MAINTAIN_GUIDANCE = (f"action: one of {', '.join(JOBS)}; "
                       "project: a plain repo name (no separators, no leading dot)")
 
 
-def _register(mcp: FastMCP, app, read_only: bool):
+def describe_failure(exc: Exception) -> tuple[int, dict]:
+    """(HTTP status, {error, guidance}) for a failure no handler translated:
+    ONE description for REST and MCP.
+
+    A stale index is a 409: the request was well formed and the server is
+    healthy, but its state conflicts with the settings now configured, and the
+    remedy is a specific operator action. A model still in its load backoff
+    says "unavailable" and is a 503 (retry later); everything else is a 500."""
+    if isinstance(exc, IndexStaleError):
+        return 409, {"error": str(exc), "guidance": "`mainframe down`, then `mainframe rebuild`"}
+    status = 503 if "unavailable" in str(exc).lower() else 500
+    return status, {"error": str(exc), "guidance": "check `mainframe status` and daemon.log"}
+
+
+def _reported(tool):
+    """A tool failure reaches the client with its remedy. MCP SDK 2.x reports
+    an exception it did not expect as only "Error executing tool <name>",
+    which hides exactly what a client acts on: rebuild, or retry later."""
+    @functools.wraps(tool)
+    async def run(*args, **kwargs):
+        try:
+            return await tool(*args, **kwargs)
+        except Exception as exc:
+            _, body = describe_failure(exc)
+            logger.warning("MCP tool %s failed: %s", tool.__name__, exc)
+            raise ToolError(f"{body['error']} -- {body['guidance']}") from exc
+    return run
+
+
+def _register(mcp: MCPServer, app, read_only: bool):
     @mcp.tool(name="search", annotations=READ_ONLY,
               description=("Search the Mainframe (semantic vector search, reranked; keyword matching is a "
                            "backstop, so an exact token is not guaranteed to match). Use SPECIFIC technical "
@@ -31,6 +64,7 @@ def _register(mcp: FastMCP, app, read_only: bool):
                            "results, or the reranker is disabled; rerank_score is then 0.0 for every result "
                            "and reflects candidate order only). response_format: concise (default) "
                            "or detailed. Session captures are excluded unless include_sessions=true."))
+    @_reported
     async def search(query: str, limit: int = 3, include_sessions: bool = False, response_format: str = "concise") -> dict:
         return await asyncio.to_thread(app.search, query, limit, include_sessions, response_format)
 
@@ -39,6 +73,7 @@ def _register(mcp: FastMCP, app, read_only: bool):
                   description=("Write one immutable, secret-scrubbed session note into the capture lane "
                                "(indexed automatically; excluded from default search). Author dense markdown "
                                "sections: ## Summary, ## Decisions, ## Action items, ## Key facts."))
+        @_reported
         async def capture(content: str, title: str, project: str | None = None, session_id: str = "",
                           kind: str = "session", cwd: str = "") -> dict:
             try:
@@ -49,6 +84,7 @@ def _register(mcp: FastMCP, app, read_only: bool):
 
     @mcp.tool(name="status", annotations=READ_ONLY,
               description="Daemon health: models, VRAM, index rows/versions/indexes, pending captures, recent events.")
+    @_reported
     async def status() -> dict:
         return await asyncio.to_thread(app.status)
 
@@ -58,6 +94,7 @@ def _register(mcp: FastMCP, app, read_only: bool):
                                "optimize (compact), reload (drop the resident models so the next use "
                                "reloads them — for a GPU fault that survives a retry). A full rebuild is "
                                "offline only: `mainframe down` then `mainframe rebuild`."))
+        @_reported
         async def maintain(action: str, project: str | None = None) -> dict:
             try:
                 return await asyncio.to_thread(app.maintain, action, project)
@@ -65,24 +102,18 @@ def _register(mcp: FastMCP, app, read_only: bool):
                 return {"error": str(e), "guidance": _MAINTAIN_GUIDANCE}
 
 
-class _DiscoverProbeNoise(logging.Filter):
-    """mcp 1.x does not know `server/discover`, the opening probe of the
-    2026-07-28 protocol. It answers with an error the client falls back from,
-    which is correct, and logs a ~17-line validation dump on root for each
-    probe. Drop exactly that record; the SDK 2.x port (#69) makes it moot."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        message = record.getMessage()
-        return not (message.startswith("Failed to validate request") and "server/discover" in message)
+# Stateless Streamable HTTP with JSON responses: the 2026-07-28 revision's
+# `server/discover` and the legacy `initialize` handshake are both answered.
+# JSON, not SSE, is what keeps api.TokenMiddleware (a BaseHTTPMiddleware) safe.
+HTTP_TRANSPORT = {"stateless_http": True, "json_response": True, "streamable_http_path": "/"}
 
 
-def _server(name: str) -> FastMCP:
-    root = logging.getLogger()
-    if not any(isinstance(f, _DiscoverProbeNoise) for f in root.filters):
-        root.addFilter(_DiscoverProbeNoise())
-    # The SDK configures the ROOT logger (a console handler) at log_level;
+def _server(name: str) -> MCPServer:
+    # subscriptions=False: `subscriptions/listen` is the one 2.x method that
+    # streams SSE despite json_response, and there is nothing to subscribe to.
+    # log_level: the SDK configures the ROOT logger (a console handler) at it;
     # INFO was a "Processing request" line per call in daemon.out.
-    return FastMCP(name, stateless_http=True, json_response=True, streamable_http_path="/", log_level="WARNING")
+    return MCPServer(name, version=__version__, log_level="WARNING", subscriptions=False)
 
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "[::1]"})
@@ -162,27 +193,18 @@ def build_mcp(app):
 
 
 def _unhandled(_request, exc: Exception) -> JSONResponse:
-    """Anything a handler did not translate, as the documented error shape.
-
-    A stale index is a 409: the request was well formed and the server is
-    healthy, but its state conflicts with the settings now configured, and the
-    remedy is a specific operator action. Without this the carefully written
-    "stop the daemon and run `mainframe rebuild`" reached only the log while
-    REST answered an opaque 500. A model still in its load backoff says
-    "unavailable" and is a 503 (retry later); everything else is a 500."""
-    if isinstance(exc, IndexStaleError):
-        return JSONResponse({"error": str(exc), "guidance": "`mainframe down`, then `mainframe rebuild`"},
-                            status_code=409)
-    status = 503 if "unavailable" in str(exc).lower() else 500
-    return JSONResponse({"error": str(exc), "guidance": "check `mainframe status` and daemon.log"},
-                        status_code=status)
+    """Anything a REST handler did not translate, as the documented error shape
+    (without this, "stop the daemon and run `mainframe rebuild`" reached only
+    the log while REST answered an opaque 500)."""
+    status, body = describe_failure(exc)
+    return JSONResponse(body, status_code=status)
 
 
-def mount(full: FastMCP, ro: FastMCP, extra_routes=None, on_startup=None, on_shutdown=None) -> Starlette:
+def mount(full: MCPServer, ro: MCPServer, extra_routes=None, on_startup=None, on_shutdown=None) -> Starlette:
     """Parent app: `/mcp/ro` before `/mcp`; both session managers and the
     daemon's start/stop hooks run in ONE lifespan (mounted sub-app lifespans
     do not run on their own)."""
-    full_app, ro_app = full.streamable_http_app(), ro.streamable_http_app()
+    full_app, ro_app = full.streamable_http_app(**HTTP_TRANSPORT), ro.streamable_http_app(**HTTP_TRANSPORT)
 
     @contextlib.asynccontextmanager
     async def lifespan(_):
@@ -207,7 +229,7 @@ def mount(full: FastMCP, ro: FastMCP, extra_routes=None, on_startup=None, on_shu
     # would otherwise report as "could not reach the daemon". Starlette runs
     # this from ServerErrorMiddleware, so the JSON goes out and the exception
     # is still re-raised for the server's own log. (The MCP mounts are already
-    # safe: FastMCP turns a tool exception into an isError result.)
+    # safe: MCPServer turns a tool exception into an isError result.)
     app = Starlette(routes=routes, lifespan=lifespan, exception_handlers={Exception: _unhandled})
     # Starlette's Mount pattern for e.g. "/mcp/ro" only matches a request path
     # that ALREADY has a trailing "/mcp/ro/..." — a bare "/mcp/ro" (what a

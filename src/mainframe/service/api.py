@@ -107,8 +107,8 @@ class TokenMiddleware(BaseHTTPMiddleware):
     Applied outermost, so it covers `/mcp` and `/mcp/ro` too.
 
     `BaseHTTPMiddleware` is the discouraged base for anything that streams: it
-    is safe here ONLY because both FastMCP instances are built with
-    `json_response=True` (see `mcp_server._server`). If that flag is ever
+    is safe here ONLY because both MCP apps are built with
+    `json_response=True` (see `mcp_server.HTTP_TRANSPORT`). If that flag is ever
     flipped to SSE, this must become pure ASGI middleware."""
 
     def __init__(self, app, token: str):
