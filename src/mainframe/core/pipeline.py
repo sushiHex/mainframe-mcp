@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from mainframe.core.classify import declared_kind_of
 from mainframe.core.indexer import UNCHANGED, VANISHED, DocFailure, EmbedderUnavailable, prepare_document
 from mainframe.core.paths import canonical, doc_id
 
@@ -133,9 +134,23 @@ class IndexPipeline:
             vanished = [p for p in known if p.startswith(prefix) and self.lanes.resolve(p) is None]
         else:
             vanished = [p for p in known if self.lanes.resolve(p) is None]
-        rep = self._run(lanefiles, vanished, "rescan", prune_skipped=prune_skipped)
+        rep = self._run(lanefiles, vanished, "rescan", prune_skipped=prune_skipped,
+                        force=self._reclassify(project))
         self.events.emit("index.rescan", project=project, **rep.as_dict())
         return rep
+
+    def _reclassify(self, project: str | None) -> frozenset:
+        """Capture docs whose rows say `session` but whose file now declares a
+        published kind (indexed before the kind was published). A failed scan
+        forces nothing: the next rescan retries, and pruning is unaffected."""
+        try:
+            paths = self.store.session_capture_paths()
+        except Exception as e:
+            logger.warning(f"rescan: reclassification scan failed ({e}); nothing forced")
+            return frozenset()
+        prefix = None if project is None else canonical(self.lanes.capture_dir(project)).rstrip("/") + "/"
+        return frozenset(p for p in paths
+                         if (prefix is None or p.startswith(prefix)) and declared_kind_of(p) != "session")
 
     def rebuild(self) -> IndexRunResult:
         self.store.drop()
@@ -149,7 +164,8 @@ class IndexPipeline:
 
     # ---- internals ----
 
-    def _run(self, todo: list, deleted: list, kind: str, prune_skipped: bool = False) -> IndexRunResult:
+    def _run(self, todo: list, deleted: list, kind: str, prune_skipped: bool = False,
+             force: frozenset = frozenset()) -> IndexRunResult:
         """The shared batching loop for index()/rescan(): merge each incoming
         ≤batch_cap prepared-file group with its ≤batch_cap preidentified
         deletions. Prepare-time vanished files can add at most one deletion per
@@ -186,7 +202,7 @@ class IndexPipeline:
             dels = del_batches[i] if i < len(del_batches) else []
             if not chunk and not dels:
                 continue
-            self._run_batch(chunk, dels, ledger, rep)
+            self._run_batch(chunk, dels, ledger, rep, force)
             rep.batches += 1
         if rep.changed:
             ok = self.store.optimize()
@@ -200,7 +216,7 @@ class IndexPipeline:
             self.doc_count = len(ledger)  # the in-memory ledger is authoritative after a run
         return rep
 
-    def _run_batch(self, chunk, deleted_paths, ledger, rep: IndexRunResult):
+    def _run_batch(self, chunk, deleted_paths, ledger, rep: IndexRunResult, force: frozenset = frozenset()):
         failed_before = len(rep.failed)
         docs = []
         deleted_paths = list(deleted_paths)
@@ -238,7 +254,7 @@ class IndexPipeline:
                 raise
 
         for lf in chunk:
-            out = prepare_document(lf, self.chunk_cfg, embed, known_hash=ledger.get(lf.path),
+            out = prepare_document(lf, self.chunk_cfg, embed, known_hash=None if lf.path in force else ledger.get(lf.path),
                                    contextualizer=ctx)
             if out is VANISHED:
                 self.empty_paths.discard(lf.path)

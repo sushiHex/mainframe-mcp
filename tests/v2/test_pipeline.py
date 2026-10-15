@@ -502,3 +502,85 @@ def test_vanished_prepare_does_not_prune_when_root_disappears_after_enumeration(
 
     assert report.prune_skipped is True and report.deleted_docs == 0
     assert store.count_rows() == 1
+
+
+# ---- a rescan heals capture rows that predate their published kind ----
+
+_DECISION = "---\ntype: decision\nproject: p\n---\n# T\n\n## Summary\n{body}\n"
+
+
+def _kinds(store) -> dict:
+    df = store._scan(["doc_path", "source_type"])
+    return {p: set(df[df["doc_path"] == p]["source_type"]) for p in set(df["doc_path"])}
+
+
+def _session_era_capture(cfg, store, tmp_path, monkeypatch, body="healme body text here."):
+    """Index a `type: decision` capture while nothing is published, so its rows say `session`."""
+    cap = write_md(Lanes(cfg).capture_dir("p") / "2026-01-01-000000-ab12cd34-ef56ab78.md",
+                   _DECISION.format(body=body))
+    with monkeypatch.context() as m:
+        m.setattr("mainframe.core.classify.PUBLISHED_KINDS", frozenset())
+        assert _pipe(cfg, store, tmp_path).index([str(cap)]).upserted_rows > 0
+    assert _kinds(store) == {canonical(cap): {"session"}}
+    return cap
+
+
+def test_a_rescan_reindexes_a_capture_whose_rows_predate_its_kind(cfg, store, tmp_path, monkeypatch):
+    cap = _session_era_capture(cfg, store, tmp_path, monkeypatch)
+    calls = []
+    real = FakeEmbedder.embed
+
+    def counting(self, texts, *a, **kw):
+        calls.append(list(texts))
+        return real(self, texts, *a, **kw)
+    monkeypatch.setattr(FakeEmbedder, "embed", counting)
+    pipe = _pipe(cfg, store, tmp_path)
+    rep = pipe.rescan()
+    assert rep.unchanged == 0 and rep.upserted_rows > 0 and not rep.failed
+    assert _kinds(store) == {canonical(cap): {"decision"}}
+    assert len(calls) == 1
+    keys = list(store._scan(["chunk_key"])["chunk_key"])
+    assert len(keys) == len(set(keys)) == store.count_rows()
+    assert pipe.rescan().unchanged == 1 and len(calls) == 1          # healed: nothing embeds again
+
+
+def test_a_watcher_run_does_not_heal(cfg, store, tmp_path, monkeypatch):
+    """Pin: only the periodic rescan reclassifies; index() trusts the ledger."""
+    cap = _session_era_capture(cfg, store, tmp_path, monkeypatch)
+    other = write_md(Path(cfg["paths"]["repos_dir"]) / "p" / "docs" / "o.md", "# o\n\nunrelated text.\n")
+    pipe = _pipe(cfg, store, tmp_path)
+    assert pipe.index([str(other)]).upserted_rows == 1
+    assert pipe.index([str(cap)]).unchanged == 1
+    assert _kinds(store)[canonical(cap)] == {"session"} and canonical(cap) in store.ledger()
+
+
+def test_a_failed_reclassification_scan_forces_nothing_and_prunes_on(cfg, store, tmp_path, monkeypatch):
+    r = Path(cfg["paths"]["repos_dir"]) / "p"
+    gone = write_md(r / "docs" / "gone.md", "# gone\n\nvanishing text.\n")
+    write_md(r / "docs" / "kept.md", "# kept\n\nstays put.\n")
+    pipe = _pipe(cfg, store, tmp_path)
+    assert pipe.rescan().upserted_rows == 2
+    gone.unlink()
+    monkeypatch.setattr(store, "session_capture_paths", _raises_scan)
+    rep = pipe.rescan()
+    assert rep.prune_skipped is False and rep.deleted_docs == 1 and not rep.failed
+    assert pipe.ledger_degraded is False and set(store.ledger()) == {canonical(r / "docs" / "kept.md")}
+
+
+def test_a_forced_doc_that_fails_keeps_its_rows_and_heals_next_rescan(cfg, store, tmp_path, monkeypatch):
+    cap = _session_era_capture(cfg, store, tmp_path, monkeypatch, body="flaky body text here.")
+    real = FakeEmbedder.embed
+    armed = [True]
+
+    def flaky(self, texts, *a, **kw):
+        if armed and any("flaky body" in t for t in texts):
+            armed.clear()                                          # raise once, scoped to this doc's text
+            raise RuntimeError("synthetic embed failure")
+        return real(self, texts, *a, **kw)
+    monkeypatch.setattr(FakeEmbedder, "embed", flaky)
+    pipe = _pipe(cfg, store, tmp_path)
+    rep = pipe.rescan()
+    assert [f["file"] for f in rep.failed] == [canonical(cap)] and "synthetic embed failure" in rep.failed[0]["error"]
+    assert _kinds(store) == {canonical(cap): {"session"}} and canonical(cap) in store.ledger()
+    rep = pipe.rescan()
+    assert not rep.failed and _kinds(store) == {canonical(cap): {"decision"}}
