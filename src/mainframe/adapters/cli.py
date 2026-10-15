@@ -16,6 +16,7 @@ from xml.sax.saxutils import escape
 import httpx
 
 from mainframe.config import load_config
+from mainframe.memory.capture import KINDS
 from mainframe.service.discovery import LOCK_HELD_EXIT, SUPERVISOR_PID_ENV, lock_path, probe, read_discovery
 
 DOWN_EXIT = 2
@@ -497,6 +498,8 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
     t = sub.add_parser("install-task"); t.add_argument("--dry-run", action="store_true")
     c = sub.add_parser("capture"); c.add_argument("--file", required=True); c.add_argument("--project", required=True)
     c.add_argument("--title"); c.add_argument("--session-id", default="")
+    c.add_argument("--kind", choices=KINDS, default="session",
+                   help="decision and note are default-searchable; session is opt-in history (default)")
     h = sub.add_parser("hook", help="agent-host hook entry points (event JSON on stdin; always exits 0)")
     # A free-form name, not subcommands: argparse exits 2 on an unknown
     # choice, and a PreCompact hook that exits 2 blocks the compaction.
@@ -598,7 +601,8 @@ def main(argv=None, config=None, http=None, runner=None, spawn=None) -> int:
             return 1
         return _call(lambda: _emit(client.post("/capture", json={
             "content": text, "title": args.title or Path(args.file).stem,
-            "project": args.project, "session_id": args.session_id, "captured_by": "cli"})))
+            "project": args.project, "session_id": args.session_id, "kind": args.kind,
+            "captured_by": "cli"})))
     return 0
 
 

@@ -135,6 +135,22 @@ def test_status_search_capture_are_rest_only(cfg, capsys, tmp_path):
     assert not any(p == "/mcp" for _, p, _, _ in http.calls)
 
 
+def test_capture_kind_is_forwarded_and_choices_refuse_bogus(cfg, capsys, tmp_path):
+    seen = {}
+    http = FakeHTTP({**_up(cfg), ("POST", "/capture"): lambda b: seen.update(b) or {"file": "x"}})
+    note = tmp_path / "n.md"
+    note.write_text("## Summary\nchose qwen3.\n", encoding="utf-8")
+    assert cli.main(["capture", "--file", str(note), "--project", "p", "--kind", "decision"],
+                    config=cfg, http=http) == 0
+    assert seen["kind"] == "decision"
+    seen.clear()
+    assert cli.main(["capture", "--file", str(note), "--project", "p"], config=cfg, http=http) == 0
+    assert seen["kind"] == "session"
+    with pytest.raises(SystemExit) as e:
+        cli.main(["capture", "--file", str(note), "--project", "p", "--kind", "bogus"], config=cfg, http=http)
+    assert e.value.code == 2
+
+
 def test_daemon_down_and_stale_nonce(cfg, capsys):
     assert cli.main(["status"], config=cfg, http=FakeHTTP({})) == 2
     err = capsys.readouterr().err

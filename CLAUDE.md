@@ -15,8 +15,9 @@ repository is the development home. Read `AGENTS.md`, `CONTRIBUTING.md`, and
   the last build that shipped it.
 - v2 owns `<mainframe_dir>/index.lancedb` and builds it on first startup. A
   `.lancedb` left in the same directory by v1 is never opened or converted.
-- Consolidation is not implemented. The capture/receipt primitives do not
-  imply a complete ambient consolidation loop.
+- Consolidation is not implemented. The capture primitives do not imply a
+  complete ambient consolidation loop. Captures of kind `decision` or `note`
+  (`PUBLISHED_KINDS`) are searched by default; `session` captures are opt-in.
 - Harrier 0.6B native BF16 is the v2 default, paired with Qwen3 Reranker
   0.6B in BF16 at revision `e61197ed45024b0ed8a2d74b80b4d909f1255473`.
   The native suffix-preserving `<Document>` technical-documentation contract
@@ -33,7 +34,7 @@ repository is the development home. Read `AGENTS.md`, `CONTRIBUTING.md`, and
 |---|---|
 | `src/mainframe/app.py` | Composition and common operation entry points |
 | `src/mainframe/core/` | Models, chunks, pipeline, store, search, citations |
-| `src/mainframe/memory/` | Lanes, atomic captures, receipts |
+| `src/mainframe/memory/` | Lanes, atomic captures |
 | `src/mainframe/service/` | Daemon, discovery, watcher, scheduler, REST |
 | `src/mainframe/adapters/` | CLI, MCP mounts, stdio forwarding |
 | `tests/`, `tests/v2/` | GPU-free regression suites |

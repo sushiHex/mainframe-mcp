@@ -112,6 +112,14 @@ def test_captured_by_is_provenance_not_caller_input(cfg, store, tmp_path):
         assert "sk_live_" not in c.get("/events?n=50").text
 
 
+def test_rest_capture_with_kind_decision_writes_type_decision(cfg, store, tmp_path):
+    d = _daemon(cfg, store, tmp_path)
+    with held(d), TestClient(d.build(), base_url=BASE) as c:
+        info = c.post("/capture", json={"content": "## Summary\nx", "title": "t", "project": "p",
+                                        "kind": "decision"}).json()
+        assert "type: decision" in Path(info["file"]).read_text(encoding="utf-8")
+
+
 def test_captured_by_is_scrubbed_on_every_surface(cfg, store, tmp_path):
     """Belt and braces behind the REST overwrite: `capture()` scrubs the value
     once, so the file and the event can never disagree about it."""

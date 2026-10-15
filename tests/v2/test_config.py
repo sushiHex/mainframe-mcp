@@ -47,6 +47,7 @@ def test_defaults_have_required_sections():
     assert DEFAULTS["memory"]["threshold"] == 5 and DEFAULTS["memory"]["vram_footprint_gb"] == 3.5
     assert DEFAULTS["search"]["candidate_pool"] == 20
     assert DEFAULTS["tiers"]["session"] == 1.05
+    assert DEFAULTS["tiers"]["decision"] == DEFAULTS["tiers"]["note"] == DEFAULTS["tiers"]["research"]
 
 
 def test_load_config_merges_file_and_env(tmp_path, monkeypatch):
