@@ -37,6 +37,8 @@ python -m venv .venv
 
 Activate it with `.venv\Scripts\Activate.ps1` in PowerShell, or `source .venv/bin/activate` on Linux. Then run the installation commands above. Use this environment for the daemon and its clients.
 
+Keep the daemon out of a shared Python user site, where another tool's pins can block its upgrades. Put it in a venv at a fixed location, register the logon task and the MCP client from that environment, and remove any user-site copy: see [Run the daemon from its own environment](docs/V2.md#run-the-daemon-from-its-own-environment).
+
 </details>
 
 These instructions install current `main`, where Harrier and the v2 daemon are the defaults. Artifact `v2.0.0a1` shipped the prior model stack (Qwen embeddings) and the since-removed v1 stdio server; see [migration and release notes](docs/PREVIEW_RELEASE.md).
