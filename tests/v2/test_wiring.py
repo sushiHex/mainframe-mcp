@@ -14,7 +14,7 @@ from v2.helpers import write_md
 from v2.test_watcher import FakeObserver
 
 HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
-# FastMCP's transport security rejects a portless Host header, and httpx
+# MCPServer's transport security rejects a portless Host header, and httpx
 # normalizes away a default-port URL's port — base_url carries an explicit
 # (fictitious) port, as tests/v2/test_daemon.py and test_mcp_server.py do.
 BASE = "http://127.0.0.1:8420"
