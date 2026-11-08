@@ -118,4 +118,4 @@ candidates. For an embedding or chunking change, stop the daemon, then run
 `mainframe rebuild`, then start it again with `mainframe serve`.
 See the [v2 daemon guide](V2.md#index-ownership-and-recovery) for the exact
 recovery sequence. This replaces the legacy v1 tool list; see the
-[migration guide](PREVIEW_RELEASE.md) when working with an older setup.
+[migration guide](RELEASE.md) when working with an older setup.

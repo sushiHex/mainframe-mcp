@@ -25,7 +25,7 @@ Use a dedicated Python environment with CUDA-enabled [PyTorch](https://pytorch.o
 
 ```sh
 python -m pip install torch --index-url https://download.pytorch.org/whl/cu128
-python -m pip install "git+https://github.com/sushiHex/mainframe-mcp.git@main"
+python -m pip install "git+https://github.com/sushiHex/mainframe-mcp.git@v2.0.0"
 ```
 
 <details>
@@ -39,7 +39,7 @@ Activate it with `.venv\Scripts\Activate.ps1` in PowerShell, or `source .venv/bi
 
 </details>
 
-These instructions install current `main`, where Harrier and the v2 daemon are the defaults. Artifact `v2.0.0a1` shipped the prior model stack (Qwen embeddings) and the since-removed v1 stdio server; see [migration and release notes](docs/PREVIEW_RELEASE.md).
+This installs release 2.0.0; replace `@v2.0.0` with `@main` to follow development. The release also ships an audited wheel with checksums ([install an audited artifact](docs/RELEASE.md#install-an-audited-artifact)). An index built by 2.0.0a2 or 2.0.0b1 is reused as is. 2.0.0a1 used another embedding model (and shipped the since-removed v1 stdio server), so its index needs `mainframe rebuild`; see [migration and release notes](docs/RELEASE.md).
 
 ### 2. Choose your projects
 
@@ -129,10 +129,11 @@ mainframe search "deployment decision" --sessions --detailed
 mainframe capture --file decision.md --project example-project --title "Deployment decision"
 mainframe rescan
 mainframe events --tail 20
+mainframe restart
 mainframe down
 ```
 
-Captures live in the configured state directory (`~/.claude/mainframe/captures/` by default) and are indexed asynchronously. Ordinary search excludes them; `--sessions` includes them. `down` finishes active work and stops the daemon to release its model memory. See the [daemon guide](docs/V2.md) for startup automation, diagnostics, and offline rebuilding.
+Captures live in the configured state directory (`~/.claude/mainframe/captures/` by default) and are indexed asynchronously. Ordinary search excludes them; `--sessions` includes them. `restart` stops and starts the daemon, which is how it reads configuration edits. `down` finishes active work and stops the daemon to release its model memory. See the [daemon guide](docs/V2.md) for startup automation, diagnostics, and offline rebuilding.
 
 Claude Code can capture sessions automatically. A capture covers one segment of a session: what happened since its last compaction. Register two hooks: `mainframe hook pre-compact` as a `PreCompact` hook (the segment a compaction is about to summarize) and `mainframe hook session-end` as a `SessionEnd` hook (the last segment). Each reads the hook's JSON on stdin, needs no running daemon and no GPU, starts in well under SessionEnd's 1.5 s default timeout, always exits 0, and logs each decision to `<state dir>/hook.log`.
 
@@ -214,7 +215,7 @@ To upgrade an existing installation, use the reranker settings in
 [config.example.json](config.example.json) and restart the daemon. Changing only
 the reranker does **not** require re-embedding your files.
 
-The daemon supports capture, indexing, and search. Consolidation, contradiction detection, and RAPTOR are not implemented; the [removed v1 server](docs/PREVIEW_RELEASE.md#capabilities) had them. Changing embedding settings requires a matching index; follow the [offline rebuild procedure](docs/V2.md#index-ownership-and-recovery).
+The daemon supports capture, indexing, and search. Consolidation, contradiction detection, and RAPTOR are not implemented; the [removed v1 server](docs/RELEASE.md#capabilities) had them. Changing embedding settings requires a matching index; follow the [offline rebuild procedure](docs/V2.md#index-ownership-and-recovery).
 
 A model-only embedding override uses legacy Sentence Transformers encoding. To select another native embedder, configure its model, encoding, pinned revision, query prompt, and quantization together; see [model configuration](docs/V2.md#configure-and-start).
 
