@@ -1,4 +1,4 @@
-"""The three lanes and receipts.
+"""The two lanes.
 
 knowledge: <repos_dir>/<repo>/{research,docs,machines,playbooks}/**/*.md + root
            context files (git-tracked; the rules are the ones the eval corpus
@@ -6,14 +6,11 @@ knowledge: <repos_dir>/<repo>/{research,docs,machines,playbooks}/**/*.md + root
            server's raw capture lane, which may still exist on disk and stays
            separate from v2 captures).
 capture:   <mainframe_dir>/captures/<repo>/*.md (immutable; quarantine/ and
-           overflow/ subdirs are neither indexed nor pending).
-note:      promoted <repo>/research/memory/<slug>.md (+ <slug>.sources.json);
-           drafts <mainframe_dir>/drafts/<repo>/<slug>.md (+ .sources.json).
+           overflow/ subdirs are not indexed).
 Lane membership is decided HERE, by which enumerator produced the file — never
 by a path substring.
 """
 
-import json
 import logging
 import os
 import re
@@ -25,7 +22,6 @@ from mainframe.core.classify import (CAPTURE_LANE, KNOWLEDGE_DIRS, KNOWLEDGE_LAN
 from mainframe.core.hashing import content_hash
 from mainframe.core.indexer import LaneFile
 from mainframe.core.paths import canonical
-from mainframe.memory.atomic import write_atomic
 from mainframe.memory.frontmatter import split
 
 logger = logging.getLogger(__name__)
@@ -82,8 +78,7 @@ def capture_id_of(path) -> str:
     """The stable identity of a capture: its frontmatter `capture_id`, else
     the first 16 hex of the normalized body hash (legacy files). Frontmatter
     always sits in the first few lines, so try a cheap 4 KB head read first —
-    `pending()` calls this for every capture file on every check, and only a
-    legacy (no capture_id) file needs to pay for reading the whole body."""
+    only a legacy (no capture_id) file needs to pay for reading the whole body."""
     p = Path(path)
     with p.open("r", encoding="utf-8", errors="replace") as f:
         head = f.read(4096)
@@ -95,24 +90,6 @@ def capture_id_of(path) -> str:
     fields, body = split(text)
     cid = fields.get("capture_id", "").strip()
     return cid or content_hash(body)[:16]
-
-
-def load_receipts(path) -> set:
-    p = Path(path)
-    if not p.exists():
-        return set()
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            return set()
-        return set(data.get("capture_ids", []))
-    except (OSError, ValueError, AttributeError):
-        return set()
-
-
-def save_receipts(path, capture_ids, meta: dict) -> None:
-    data = {"capture_ids": sorted(capture_ids), **meta}
-    write_atomic(Path(path), json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
 class Lanes:
@@ -323,7 +300,7 @@ class Lanes:
         if self._rel_parts(p, self._mainframe_real) is not None:
             rel = self._rel_parts(p, self._captures_real)
             # The capture lane is flat: quarantine/ and overflow/ (and anything
-            # deeper) are neither indexed nor pending.
+            # deeper) are not indexed.
             return rel is not None and len(rel) <= 1
         rel = self._rel_parts(p, self._repos_real)
         if rel is None:
@@ -405,32 +382,3 @@ class Lanes:
 
     def all_files(self) -> list:
         return self.knowledge_files() + self.capture_files()
-
-    # ---- notes / drafts / receipts ----
-
-    def note_path(self, project: str, slug: str) -> Path:
-        return self.repos_dir / safe_name(project) / "research" / "memory" / f"{safe_name(slug)}.md"
-
-    def note_receipts_path(self, project: str, slug: str) -> Path:
-        return self.repos_dir / safe_name(project) / "research" / "memory" / f"{safe_name(slug)}.sources.json"
-
-    def draft_path(self, project: str, slug: str) -> Path:
-        return self.mainframe_dir / "drafts" / safe_name(project) / f"{safe_name(slug)}.md"
-
-    def draft_receipts_path(self, project: str, slug: str) -> Path:
-        return self.mainframe_dir / "drafts" / safe_name(project) / f"{safe_name(slug)}.sources.json"
-
-    def pending(self, project: str, slug: str | None = None) -> list:
-        """Captures not yet absorbed by the PROMOTED note (draft receipts never
-        define pending — the draft is disposable)."""
-        promoted = load_receipts(self.note_receipts_path(project, slug or project))
-        out = []
-        for f in self.capture_files(project):
-            try:
-                cid = capture_id_of(f.path)
-            except OSError as e:
-                logger.warning(f"pending: skipping unreadable capture {f.path}: {e}")
-                continue
-            if cid not in promoted:
-                out.append(f)
-        return out

@@ -158,11 +158,6 @@ class Mainframe:
                 vram = {"free_gb": round(free / 1e9, 2), "total_gb": round(total / 1e9, 2)}
         except Exception:
             pass
-        pending = {}
-        for proj in sorted({f.project for f in self.lanes.capture_files()}):
-            n = len(self.lanes.pending(proj))
-            if n:
-                pending[proj] = n
         # `status` runs on a reader thread. Installing the count it computes
         # would let a stale read overwrite a newer one the writer thread just
         # set (`pipeline.doc_count` belongs to `_run`), so the scan pays for
@@ -186,8 +181,7 @@ class Mainframe:
                       "config_drift": self.store.config_drift,
                       "rebuild_required": bool(self.store.config_drift),
                       "empty_files": len(self.pipeline.empty_paths), "last_run": self.pipeline.last_run},
-            "memory": {"mode": "index-and-search only",      # Consolidation is not implemented in v2.
-                       "pending": pending, "drafts": []},
+            "memory": {"mode": "published captures"},       # No counts: status reads cached health, never scans.
             "scope": {"include": self.config["paths"].get("include_projects", []),
                       "exclude": self.config["paths"].get("exclude_projects", []),
                       "skipped_projects": getattr(self.lanes, "skipped_projects", 0)},

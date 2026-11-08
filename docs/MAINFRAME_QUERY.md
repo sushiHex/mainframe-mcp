@@ -113,7 +113,7 @@ be returned beside its correction.
 ## Status and recovery
 
 `status` takes no arguments and reports model and index state, project scope,
-pending work, and recent events. Use it to diagnose unavailable models,
+and recent events. Use it to diagnose unavailable models,
 an incomplete queue, or index drift. The full endpoint also exposes
 `maintain`: `index`/`rescan`, `optimize`, and `reload`; the read-only `/mcp/ro`
 endpoint offers only `search` and `status`.
