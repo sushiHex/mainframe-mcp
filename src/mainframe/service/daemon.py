@@ -222,11 +222,15 @@ class Daemon:
         daemon.out holds just what bypasses logging (tracebacks, faults, library
         prints) and daemon.log is the one place the log lives."""
         global _LOGGING_CONFIGURED
-        hf_offline_if_cached(self.config)
         # Weight-loading progress bars are one very long `\r` line per load in
-        # daemon.out. transformers keeps its own switch; flip it only when it is
-        # already imported — importing it here would cost the daemon start.
+        # daemon.out. huggingface_hub reads the variable once, at import, and
+        # transformers derives its own switch from the hub's at ITS import; flip
+        # whichever is already imported — importing them here would cost the start.
         os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+        hf_offline_if_cached(self.config)
+        if "huggingface_hub" in sys.modules:
+            from huggingface_hub.utils import disable_progress_bars
+            disable_progress_bars()
         if "transformers" in sys.modules:
             from transformers.utils.logging import disable_progress_bar
             disable_progress_bar()
