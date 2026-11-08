@@ -25,7 +25,7 @@ Use a dedicated Python environment with CUDA-enabled [PyTorch](https://pytorch.o
 
 ```sh
 python -m pip install torch --index-url https://download.pytorch.org/whl/cu128
-python -m pip install "git+https://github.com/sushiHex/mainframe-mcp.git@v2.0.0"
+python -m pip install "git+https://github.com/sushiHex/mainframe-mcp.git@v2.1.0"
 ```
 
 <details>
@@ -41,7 +41,7 @@ Keep the daemon out of a shared Python user site, where another tool's pins can 
 
 </details>
 
-This installs release 2.0.0; replace `@v2.0.0` with `@main` to follow development. The release also ships an audited wheel with checksums ([install an audited artifact](docs/RELEASE.md#install-an-audited-artifact)). An index built by 2.0.0a2 or 2.0.0b1 is reused as is. 2.0.0a1 used another embedding model (and shipped the since-removed v1 stdio server), so its index needs `mainframe rebuild`; see [migration and release notes](docs/RELEASE.md).
+This installs release 2.1.0; replace `@v2.1.0` with `@main` to follow development. The release also ships an audited wheel with checksums ([install an audited artifact](docs/RELEASE.md#install-an-audited-artifact)). An index built by 2.0.0a2 or later is reused as is; the first full rescan after upgrading from 2.0.x repairs some chunks once. 2.0.0a1 used another embedding model (and shipped the since-removed v1 stdio server), so its index needs `mainframe rebuild`; see [migration and release notes](docs/RELEASE.md).
 
 ### 2. Choose your projects
 

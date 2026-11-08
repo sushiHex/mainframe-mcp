@@ -1,10 +1,47 @@
-# 2.0.0
+# 2.1.0
 
-**2.0.0** is the v2 daemon with the v1 server removed: Harrier 0.6B native
-(1024-dim) embedding and Qwen3-Reranker-0.6B, unchanged from 2.0.0a2 and
-2.0.0b1, so an a2 or b1 index is reused as is — no rebuild.
+**2.1.0** adds published captures and moves to the MCP SDK 2.x. The models and
+the index fingerprint are unchanged from 2.0.0, 2.0.0b1 and 2.0.0a2, so an
+existing index is reused without a rebuild. The first full rescan repairs, once,
+the chunks of documents that have `#` lines inside fenced code.
 
-## Changes since 2.0.0b1
+## Changes since 2.0.0
+
+- **Published captures.** `capture` takes `kind`: `session` (the default,
+  opt-in history), `decision` or `note`. Decision and note captures are
+  included in ordinary search, in every project; session captures still need
+  `include_sessions`. Retract a capture by moving it into
+  `captures/<project>/quarantine/`. A rescan re-indexes captures whose rows
+  predate their published kind, and both search branches prefilter, so session
+  rows cannot crowd the keyword slots (#81, #76).
+- **The unbuilt note machinery is retired.** `status().memory` is
+  `{"mode": "published captures"}`; there are no pending counts or drafts (#83).
+- **Chunker:** a `#` line inside a fenced code block is no longer a heading.
+  Existing indexes are repaired by the first full rescan: only documents whose
+  chunk layout changed are re-embedded, and the index records
+  `chunker_revision` 2 (#87, #80).
+- **Logs:** `daemon.log` rotates (5 MB, three copies). `daemon.out` keeps only
+  what bypasses logging, with no weight-loading progress bars (#86, #88, #78).
+- **Rescan prunes captures** even while `repos_dir` is unavailable (#79).
+- **Deprecated configuration:** six `memory.*` keys that nothing read are
+  accepted but ignored, and the log names each one set (#82).
+- **MCP SDK 2.x** (`mcp>=2.3,<2.4`): a 2026-07-28 client gets a
+  `server/discover` answer; legacy clients keep the `initialize` handshake, and
+  tool failures keep their remedies (#69).
+- **Own environment:** `install-task` reports the interpreter it registers and
+  warns when it is not a virtual environment's. A guide covers running the
+  daemon from its own environment (#84, #70).
+
+**Upgrading from 2.0.0:** install into the daemon's own virtual environment
+(see [Run the daemon from its own environment](V2.md#run-the-daemon-from-its-own-environment)).
+The MCP SDK 2.x requirement conflicts with tools that pin `mcp<2` in a shared
+user site. Delete any of `memory.char_budget`, `memory.check_interval_minutes`,
+`memory.settle_minutes`, `memory.threshold`, `memory.vram_footprint_gb` and
+`memory.vram_margin_gb` from `config.json`. Restart the daemon. Its first full
+rescan does the one-time chunk repair, which takes minutes on a large index
+(about 5 minutes for 4,700 files on an RTX 3090).
+
+## Changes in 2.0.0, since 2.0.0b1
 
 - **Capture hook: one capture per session segment.** A capture covers the
   transcript after the last compaction. `mainframe hook pre-compact` captures
@@ -91,12 +128,12 @@ v2 excludes session captures from search unless sessions are requested;
 ## Install an audited artifact
 
 Download the wheel and `SHA256SUMS` from the [releases page](https://github.com/sushiHex/mainframe-mcp/releases)
-for the version you intend to install: `v2.0.0` is the current release; `v2.0.0b1` was the last beta;
+for the version you intend to install: `v2.1.0` is the current release; `v2.0.0` the previous one; `v2.0.0b1` was the last beta;
 `v2.0.0a1` is the historical Qwen build. Verify the wheel hash against that
 manifest before installation:
 
 ```powershell
-Get-FileHash ./mainframe_mcp-2.0.0-py3-none-any.whl -Algorithm SHA256
+Get-FileHash ./mainframe_mcp-2.1.0-py3-none-any.whl -Algorithm SHA256
 ```
 
 On Linux, use `sha256sum -c SHA256SUMS` with both distribution files present.
@@ -108,7 +145,7 @@ python -m venv .venv-mainframe
 # POSIX: source .venv-mainframe/bin/activate
 python -m pip install --upgrade pip
 # Install CUDA-enabled PyTorch using the selector linked below, then:
-python -m pip install ./mainframe_mcp-2.0.0-py3-none-any.whl
+python -m pip install ./mainframe_mcp-2.1.0-py3-none-any.whl
 mainframe --help
 ```
 
