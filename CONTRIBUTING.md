@@ -31,8 +31,8 @@ python -m pytest tests/
 **No GPU is needed to contribute.** The test suite is deliberately GPU-free
 (deterministic fake embedders + a real LanceDB on disk) and must stay that
 way: new tests must not load models, hit the network, or assume CUDA. CI runs
-exactly `python -m pytest tests/` on a CPU-only Linux runner — if it doesn't
-pass there, it doesn't merge.
+exactly `python -m pytest tests/` on CPU-only Linux and Windows runners — if it doesn't
+pass on both, it doesn't merge.
 
 The `package-install` gate also requires clean wheel installations on Windows
 and Linux with Python 3.11 and 3.14. `scripts/check_install.py` imports the runtime
@@ -93,8 +93,8 @@ mean exactly that.
 - Commit titles follow "Component: what changed" (e.g. "Capture extractor: URLs
   are not file paths") — no Conventional-Commits prefixes.
 - One logical change per PR; reference the issue if one exists.
-- Windows and POSIX both matter (the maintainer develops on Windows, CI runs
-  Linux): use `pathlib`, never hardcode path separators or drive letters.
+- Windows and POSIX both matter (the maintainer develops on Windows; CI runs both):
+  use `pathlib`, never hardcode path separators or drive letters.
 
 ## Where things live
 

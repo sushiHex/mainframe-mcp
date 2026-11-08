@@ -832,20 +832,18 @@ def test_down_times_out_when_lock_is_held(cfg, store, monkeypatch, capsys, tmp_p
     assert holder.acquire()
     http = FakeHTTP({**_up(cfg), ("POST", "/shutdown"): lambda b: {"stopping": True}})
 
-    # 3 s per monotonic() call: two full loop passes (each a real, still-Timeout
-    # acquire + sleep) and a progress line, then past the 12 s bound.
+    # A fake clock that only SLEEP advances, 5 s per pass: passes at 0, 5 and 10 s
+    # (each a real, still-Timeout acquire), the progress line at 10 s, then past
+    # the 12 s bound. Reading the clock must not move it: `cli.time` is the global
+    # module, and filelock 4's Windows backend reads time.monotonic() in acquire().
     clock = {"t": 0.0}
-
-    def stepping_monotonic():
-        now = clock["t"]
-        clock["t"] += 3.0
-        return now
-    monkeypatch.setattr(cli.time, "monotonic", stepping_monotonic)
+    monkeypatch.setattr(cli.time, "monotonic", lambda: clock["t"])
 
     sleep_calls = {"n": 0}
 
     def counting_sleep(seconds):
         sleep_calls["n"] += 1
+        clock["t"] += 5.0
 
     monkeypatch.setattr(cli.time, "sleep", counting_sleep)
 
