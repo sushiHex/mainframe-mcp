@@ -1,5 +1,8 @@
+import json
 import os
 import shutil
+import time
+import types
 from pathlib import Path
 
 import pytest
@@ -716,3 +719,208 @@ def test_a_rescan_of_another_project_does_not_heal_this_projects_capture(cfg, st
     assert calls == [] and _kinds(store) == {canonical(cap): {"session"}}
     pipe.rescan("p")
     assert len(calls) == 1 and _kinds(store) == {canonical(cap): {"decision"}}
+
+
+# ---- a rescan repairs chunks written by an older chunker, once per revision (#80) ----
+
+_PROSE = "Install the tool by following the numbered steps below, then confirm the version it reports.\n"
+_FENCED = f"# Setup\n\n{_PROSE}\n```bash\n# install deps\npip install foo\n```\n\nAfterwards, run the smoke test.\n"
+_PLAIN = f"# Usage\n\n{_PROSE}\nRun the tool with no arguments to see its help text.\n"
+
+
+def _headings(store) -> dict:
+    df = store._scan(["doc_path", "heading"])
+    return {p: sorted(set(df[df["doc_path"] == p]["heading"])) for p in set(df["doc_path"])}
+
+
+def _index_with_the_old_chunker(cfg, store, tmp_path, monkeypatch, *files):
+    """Index `files` as revision 1 did: a '#' line in a fence still split the section."""
+    from mainframe.core.chunker import HEADING_RE
+    with monkeypatch.context() as m:
+        m.setattr("mainframe.core.chunker._find_headings", lambda text, blocks: list(HEADING_RE.finditer(text)))
+        assert _pipe(cfg, store, tmp_path).index([str(f) for f in files]).upserted_rows > 0
+    _legacy_marker(store)
+
+
+def _legacy_marker(store):
+    """A new table records the current revision; an index from before the field existed has none."""
+    marker = json.loads(store._marker_path().read_text(encoding="utf-8"))
+    marker.pop("chunker_revision", None)
+    store._marker_path().write_text(json.dumps(marker), encoding="utf-8")
+    assert store.chunker_revision() == 1
+
+
+def _spy_comparison(monkeypatch, store) -> list:
+    """Record every call to the comparison's two helpers."""
+    from mainframe.core import pipeline as pipeline_module
+    calls = []
+    real_layouts, real_chunk = store.chunk_layouts, pipeline_module.chunk_document
+
+    def chunk_layouts():
+        calls.append("chunk_layouts")
+        return real_layouts()
+
+    def chunk_document(*a, **kw):
+        calls.append("chunk_document")
+        return real_chunk(*a, **kw)
+    monkeypatch.setattr(store, "chunk_layouts", chunk_layouts)
+    monkeypatch.setattr(pipeline_module, "chunk_document", chunk_document)
+    return calls
+
+
+def _counting_embeds(monkeypatch) -> list:
+    calls = []
+    real = FakeEmbedder.embed
+
+    def counting(self, texts, *a, **kw):
+        calls.append(list(texts))
+        return real(self, texts, *a, **kw)
+    monkeypatch.setattr(FakeEmbedder, "embed", counting)
+    return calls
+
+
+def _two_docs_under_the_old_chunker(cfg, store, tmp_path, monkeypatch):
+    r = Path(cfg["paths"]["repos_dir"]) / "p" / "docs"
+    fenced, plain = write_md(r / "fenced.md", _FENCED), write_md(r / "plain.md", _PLAIN)
+    _index_with_the_old_chunker(cfg, store, tmp_path, monkeypatch, fenced, plain)
+    assert _headings(store) == {canonical(fenced): ["Setup", "install deps"], canonical(plain): ["Usage"]}
+    return fenced, plain
+
+
+def test_a_full_rescan_rechunks_only_the_docs_the_new_chunker_reads_differently(cfg, store, tmp_path, monkeypatch):
+    from mainframe.core.chunker import CHUNKER_REVISION
+    fenced, plain = _two_docs_under_the_old_chunker(cfg, store, tmp_path, monkeypatch)
+    calls = _counting_embeds(monkeypatch)
+    pipe = _pipe(cfg, store, tmp_path)
+    rep = pipe.rescan()
+    assert not rep.failed and rep.unchanged == 1 and len(calls) == 1
+    assert any("pip install foo" in t for t in calls[0])
+    assert _headings(store)[canonical(fenced)] == ["Setup"] and _headings(store)[canonical(plain)] == ["Usage"]
+    assert store.chunker_revision() == CHUNKER_REVISION
+    keys = list(store._scan(["chunk_key"])["chunk_key"])
+    assert len(keys) == len(set(keys)) == store.count_rows()
+    compared = _spy_comparison(monkeypatch, store)
+    assert pipe.rescan().unchanged == 2 and len(calls) == 1               # recorded: nothing embeds again
+    assert compared == []                                                 # ...and the comparison itself was skipped
+
+
+def test_a_capture_is_repaired_with_the_knowledge_docs(cfg, store, tmp_path, monkeypatch):
+    cap = write_md(Lanes(cfg).capture_dir("p") / "2026-01-01-000000-ab12cd34-ef56ab78.md",
+                   _DECISION.format(body=f"{_PROSE}\n```bash\n# install deps\npip install foo\n```\n"))
+    _index_with_the_old_chunker(cfg, store, tmp_path, monkeypatch, cap)
+    assert "install deps" in _headings(store)[canonical(cap)]
+    calls = _counting_embeds(monkeypatch)
+    rep = _pipe(cfg, store, tmp_path).rescan()
+    assert not rep.failed and len(calls) == 1 and "install deps" not in _headings(store)[canonical(cap)]
+
+
+def test_a_document_the_new_chunker_reads_the_same_embeds_nothing_and_records_the_revision(
+        cfg, store, tmp_path, monkeypatch):
+    """The comparison shares the indexer's frontmatter handling and offsets: with
+    strip_frontmatter on, a unified chunker sees no difference."""
+    from mainframe.core.chunker import CHUNKER_REVISION
+    cfg["chunker"]["strip_frontmatter"] = True
+    doc = write_md(Path(cfg["paths"]["repos_dir"]) / "p" / "docs" / "fm.md", "---\ntitle: t\n---\n" + _PLAIN)
+    assert _pipe(cfg, store, tmp_path).index([str(doc)]).upserted_rows > 0
+    _legacy_marker(store)
+    calls = _counting_embeds(monkeypatch)
+    rep = _pipe(cfg, store, tmp_path).rescan()
+    assert rep.unchanged == 1 and calls == [] and store.chunker_revision() == CHUNKER_REVISION
+
+
+def test_a_project_rescan_and_a_watcher_run_never_compare(cfg, store, tmp_path, monkeypatch):
+    from mainframe.core.chunker import CHUNKER_REVISION
+    fenced, _plain = _two_docs_under_the_old_chunker(cfg, store, tmp_path, monkeypatch)
+    calls = _counting_embeds(monkeypatch)
+    pipe = _pipe(cfg, store, tmp_path)
+    assert pipe.rescan("p").unchanged == 2 and pipe.index([str(fenced)]).unchanged == 1
+    assert calls == [] and store.chunker_revision() == 1
+    assert "install deps" in _headings(store)[canonical(fenced)]
+    pipe.rescan()
+    assert len(calls) == 1 and store.chunker_revision() == CHUNKER_REVISION
+
+
+def test_a_failed_comparison_scan_forces_nothing_keeps_the_revision_and_prunes_on(cfg, store, tmp_path, monkeypatch):
+    from mainframe.core.chunker import CHUNKER_REVISION
+    fenced, plain = _two_docs_under_the_old_chunker(cfg, store, tmp_path, monkeypatch)
+    calls = _counting_embeds(monkeypatch)
+    pipe = _pipe(cfg, store, tmp_path)
+    with monkeypatch.context() as m:
+        m.setattr(store, "chunk_layouts", _raises_scan)
+        plain.unlink()
+        rep = pipe.rescan()
+        assert not rep.failed and rep.deleted_docs == 1 and rep.prune_skipped is False
+        assert calls == [] and store.chunker_revision() == 1
+    assert not pipe.rescan().failed and len(calls) == 1                   # scan restored: the next rescan repairs
+    assert store.chunker_revision() == CHUNKER_REVISION and _headings(store)[canonical(fenced)] == ["Setup"]
+
+
+def test_a_forced_doc_that_fails_leaves_the_revision_unrecorded_and_retries(cfg, store, tmp_path, monkeypatch):
+    from mainframe.core.chunker import CHUNKER_REVISION
+    fenced, _plain = _two_docs_under_the_old_chunker(cfg, store, tmp_path, monkeypatch)
+    real = FakeEmbedder.embed
+    armed = [True]
+
+    def flaky(self, texts, *a, **kw):
+        if armed and any("pip install foo" in t for t in texts):
+            armed.clear()
+            raise RuntimeError("synthetic embed failure")
+        return real(self, texts, *a, **kw)
+    monkeypatch.setattr(FakeEmbedder, "embed", flaky)
+    pipe = _pipe(cfg, store, tmp_path)
+    rep = pipe.rescan()
+    assert [f["file"] for f in rep.failed] == [canonical(fenced)]
+    assert store.chunker_revision() == 1 and "install deps" in _headings(store)[canonical(fenced)]   # old rows survive
+    assert not pipe.rescan().failed
+    assert store.chunker_revision() == CHUNKER_REVISION and _headings(store)[canonical(fenced)] == ["Setup"]
+
+
+def test_a_doc_that_could_not_be_compared_keeps_the_revision_unrecorded_until_it_can(cfg, store, tmp_path, monkeypatch):
+    """Its unchanged hash would otherwise skip repair forever."""
+    from mainframe.core import pipeline as pipeline_module
+    from mainframe.core.chunker import CHUNKER_REVISION
+    fenced, plain = _two_docs_under_the_old_chunker(cfg, store, tmp_path, monkeypatch)
+    real = pipeline_module.chunk_document
+
+    def broken(lf, text, cfg_):
+        if lf.path == canonical(fenced):
+            raise RuntimeError("synthetic chunk failure")
+        return real(lf, text, cfg_)
+    pipe = _pipe(cfg, store, tmp_path)
+    with monkeypatch.context() as m:
+        m.setattr(pipeline_module, "chunk_document", broken)
+        assert not pipe.rescan().failed
+    assert store.chunker_revision() == 1 and "install deps" in _headings(store)[canonical(fenced)]
+    calls = _counting_embeds(monkeypatch)
+    assert not pipe.rescan().failed and len(calls) == 1                   # the error is gone: repaired
+    assert store.chunker_revision() == CHUNKER_REVISION and _headings(store)[canonical(fenced)] == ["Setup"]
+
+
+def test_an_unavailable_repos_root_compares_nothing_and_records_nothing(cfg, store, tmp_path, monkeypatch):
+    """Its rows are kept but never examined, so the revision cannot advance."""
+    from mainframe.core.chunker import CHUNKER_REVISION
+    fenced, _plain = _two_docs_under_the_old_chunker(cfg, store, tmp_path, monkeypatch)
+    compared = _spy_comparison(monkeypatch, store)
+    pipe = _pipe(cfg, store, tmp_path)
+    shutil.move(cfg["paths"]["repos_dir"], str(tmp_path / "away"))
+    rep = pipe.rescan()
+    assert rep.prune_skipped is True and compared == [] and store.chunker_revision() == 1
+    shutil.move(str(tmp_path / "away"), cfg["paths"]["repos_dir"])
+    assert not pipe.rescan().failed
+    assert store.chunker_revision() == CHUNKER_REVISION and _headings(store)[canonical(fenced)] == ["Setup"]
+
+
+def test_the_comparison_counts_toward_the_runs_seconds(cfg, store, tmp_path, monkeypatch):
+    _two_docs_under_the_old_chunker(cfg, store, tmp_path, monkeypatch)
+    real = store.chunk_layouts
+    skew = [0.0]
+
+    def slow():
+        skew[0] += 100.0                    # the comparison "takes" 100 s on the pipeline's clock
+        return real()
+    monkeypatch.setattr(store, "chunk_layouts", slow)
+    monkeypatch.setattr("mainframe.core.pipeline.time",
+                        types.SimpleNamespace(monotonic=lambda: time.monotonic() + skew[0]))
+    pipe = _pipe(cfg, store, tmp_path)
+    rep = pipe.rescan()
+    assert rep.seconds >= 100 and pipe.last_run["seconds"] >= 100
