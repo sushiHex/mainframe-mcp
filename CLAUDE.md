@@ -99,7 +99,7 @@ model caches outside public Git.
 
 ## Validation and publication
 
-The current release is `2.0.0`; `mainframe.__version__` supplies the
+The current release is `2.1.0`; `mainframe.__version__` supplies the
 build metadata. Follow
 `docs/RELEASE.md` for release artifacts, migration, and rollback;
 release preparation produces an audited draft release, not a default switch.
