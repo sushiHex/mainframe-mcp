@@ -612,3 +612,16 @@ def test_progress_bars_are_disabled_before_models_load(cfg, store, tmp_path, fre
     """Weight-loading progress bars were one very long `\\r` line per load in daemon.out."""
     _daemon(cfg, store, tmp_path)._configure_process()
     assert os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] == "1"
+
+
+def test_progress_bars_stay_disabled_when_the_hub_was_imported_first(cfg, store, tmp_path, fresh_logging):
+    """huggingface_hub reads HF_HUB_DISABLE_PROGRESS_BARS once, at import, and
+    transformers derives its own switch from the hub's. With the hub already
+    imported, setting the variable alone left "Loading weights" bars in daemon.out."""
+    from huggingface_hub import utils as hub
+    hub.enable_progress_bars()
+    try:
+        _daemon(cfg, store, tmp_path)._configure_process()
+        assert hub.are_progress_bars_disabled()
+    finally:
+        hub.enable_progress_bars()
