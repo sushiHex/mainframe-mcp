@@ -126,9 +126,13 @@ class IndexPipeline:
         known = self._ledger_view()
         prune_skipped = not self.lanes.repos_dir.exists()
         if prune_skipped:
+            # Per root: captures live under mainframe_dir, so an absent repos_dir
+            # says nothing about them and a retracted one still leaves the index.
             logger.warning(f"rescan: repos_dir {self.lanes.repos_dir} is unavailable; skipping prune "
-                           "so an absent root cannot wipe the index")
-            vanished = []
+                           "of its knowledge so an absent root cannot wipe the index")
+            prefixes = ((canonical(self.lanes.capture_dir(project)).rstrip("/") + "/",)
+                        if project is not None else (self._capture_root(),))
+            vanished = [p for p in known if p.startswith(prefixes) and self.lanes.resolve(p) is None]
         elif project is not None:
             # The project's captures too: a retracted one (moved into quarantine/) no longer resolves.
             prefixes = (canonical(self.lanes.repos_dir / project).rstrip("/") + "/",
@@ -140,6 +144,9 @@ class IndexPipeline:
                         force=self._reclassify(project))
         self.events.emit("index.rescan", project=project, **rep.as_dict())
         return rep
+
+    def _capture_root(self) -> str:
+        return canonical(self.lanes.mainframe_dir / "captures").rstrip("/") + "/"
 
     def _reclassify(self, project: str | None) -> frozenset:
         """Capture docs whose rows say `session` but whose file now declares a
@@ -188,12 +195,15 @@ class IndexPipeline:
         started_at = datetime.now()
         rep = IndexRunResult()
         ledger = self._ledger_view()
-        if prune_skipped or self.ledger_degraded:
-            # Never delete against a ledger we could not read, or while the
-            # root the deletions were derived from is unavailable: both make
-            # "absent" indistinguishable from "unreadable".
+        if self.ledger_degraded:
+            # Never delete against a ledger we could not read: "absent" is
+            # indistinguishable from "unreadable".
             rep.prune_skipped = True
             deleted = []
+        elif prune_skipped:
+            # A root is unavailable. The caller already withheld the deletions
+            # it derived from that root; the rest (captures) stand.
+            rep.prune_skipped = True
         todo = sorted(todo, key=lambda f: f.path)
         deleted = sorted(set(deleted))
         rep.files = len(todo)
@@ -263,7 +273,10 @@ class IndexPipeline:
                 # A degraded ledger or unavailable root must never turn a
                 # transient absence into a deletion; retain the same prune
                 # guard used for deletions discovered before preparation.
-                if not rep.prune_skipped and not self.ledger_degraded and lf.path in ledger:
+                # Captures do not live under repos_dir, so its absence never
+                # suspends their pruning (#79).
+                if (not self.ledger_degraded and lf.path in ledger
+                        and (not rep.prune_skipped or lf.path.startswith(self._capture_root()))):
                     deleted_paths.append(lf.path)
             elif out is UNCHANGED:
                 rep.unchanged += 1

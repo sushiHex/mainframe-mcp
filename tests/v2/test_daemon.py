@@ -1,4 +1,7 @@
 import logging
+import logging.handlers
+import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -534,6 +537,7 @@ def test_a_daemon_log_line_reaches_stderr_once_beside_a_root_console_handler(cfg
     sdk_console = logging.StreamHandler()                     # what basicConfig gives root
     monkeypatch.setattr(dmod, "_LOGGING_CONFIGURED", False)
     monkeypatch.setattr(dmod, "hf_offline_if_cached", lambda c: None)
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: True, raising=False)   # an interactive `serve`
     root.addHandler(sdk_console)
     try:
         _daemon(cfg, store, tmp_path)._configure_process()
@@ -545,3 +549,66 @@ def test_a_daemon_log_line_reaches_stderr_once_beside_a_root_console_handler(cfg
             pkg.removeHandler(h)
             h.close()
         pkg.propagate, pkg.level = saved[1], saved[2]
+
+
+@pytest.fixture
+def fresh_logging(monkeypatch):
+    """Run `_configure_process` as the first call in the process, then undo its
+    handlers and the env it sets."""
+    pkg = logging.getLogger("mainframe")
+    saved = list(pkg.handlers), pkg.propagate, pkg.level
+    monkeypatch.setattr(dmod, "_LOGGING_CONFIGURED", False)
+    monkeypatch.setattr(dmod, "hf_offline_if_cached", lambda c: None)
+    monkeypatch.setenv("HF_HUB_DISABLE_PROGRESS_BARS", "0")   # so teardown restores "unset"
+    monkeypatch.delenv("HF_HUB_DISABLE_PROGRESS_BARS")
+    yield pkg
+    for h in pkg.handlers[len(saved[0]):]:
+        pkg.removeHandler(h)
+        h.close()
+    pkg.propagate, pkg.level = saved[1], saved[2]
+
+
+def _added(pkg, before):
+    return [h for h in pkg.handlers if h not in before]
+
+
+@pytest.mark.parametrize("stderr", [None, "pipe", "tty"])
+def test_stderr_handler_only_for_a_terminal(cfg, store, tmp_path, monkeypatch, fresh_logging, stderr):
+    """Under the supervisor stderr is daemon.out, which must hold only what
+    bypasses logging; pythonw has no stderr at all."""
+    class _Stream:
+        def __init__(self, tty):
+            self.tty = tty
+
+        def isatty(self):
+            return self.tty
+
+        def write(self, _text):
+            pass
+
+        def flush(self):
+            pass
+    monkeypatch.setattr(sys, "stderr", None if stderr is None else _Stream(stderr == "tty"))
+    before = list(fresh_logging.handlers)
+    _daemon(cfg, store, tmp_path)._configure_process()
+    added = _added(fresh_logging, before)
+    streams = [h for h in added if type(h) is logging.StreamHandler]
+    assert len(streams) == (1 if stderr == "tty" else 0)
+    assert len([h for h in added if isinstance(h, logging.FileHandler)]) == 1
+
+
+def test_daemon_log_rotates(cfg, store, tmp_path, fresh_logging):
+    """Neither log used to rotate: 5 MB x 3 bounds daemon.log at 20 MB."""
+    before = list(fresh_logging.handlers)
+    _daemon(cfg, store, tmp_path)._configure_process()
+    (rotating,) = [h for h in _added(fresh_logging, before) if isinstance(h, logging.FileHandler)]
+    assert isinstance(rotating, logging.handlers.RotatingFileHandler)
+    assert (rotating.maxBytes, rotating.backupCount) == (5 * 1024 * 1024, 3)
+    assert rotating.delay and rotating.encoding == "utf-8"
+    assert Path(rotating.baseFilename).name == "daemon.log"
+
+
+def test_progress_bars_are_disabled_before_models_load(cfg, store, tmp_path, fresh_logging):
+    """Weight-loading progress bars were one very long `\\r` line per load in daemon.out."""
+    _daemon(cfg, store, tmp_path)._configure_process()
+    assert os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] == "1"
