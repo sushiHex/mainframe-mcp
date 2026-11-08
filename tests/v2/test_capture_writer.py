@@ -59,6 +59,17 @@ def test_create_exclusive_leaves_no_tmp_and_counts_collisions(tmp_path):
     assert not list(tmp_path.glob("*.tmp")) and not list(tmp_path.glob(".*.tmp"))
 
 
+def test_a_published_capture_whose_header_outgrows_the_bound_is_refused(cfg):
+    L = Lanes(cfg)
+    long_cwd = "C:/" + "d" * 5000
+    for kind in ("decision", "note"):
+        with pytest.raises(ValueError, match="too long to publish"):
+            write_capture(L, "body", "t", project="proj", kind=kind, cwd=long_cwd)
+    assert not L.capture_dir("proj").exists() or list(L.capture_dir("proj").iterdir()) == []
+    p = write_capture(L, "body", "t", project="proj", kind="session", cwd=long_cwd)   # opt-in tier: no bound
+    assert split(p.read_text(encoding="utf-8"))[0]["type"] == "session"
+
+
 def test_create_exclusive_failure_leaves_neither_capture_nor_tmp(tmp_path, monkeypatch):
     def boom(fd):
         raise OSError("disk full")

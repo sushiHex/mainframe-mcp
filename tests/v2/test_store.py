@@ -81,6 +81,19 @@ def test_search_excludes_captures_by_default_and_is_stably_ordered(store, fake_e
     assert all("vector" not in r for r in res_all)
 
 
+def test_default_search_keeps_published_capture_rows_and_drops_the_rest(store, fake_embedder):
+    store.upsert_batch([
+        _rows(fake_embedder, "c:/cap/p/s.md", ["qwen reranker hybrid search"], lane="capture", source_type="session"),
+        _rows(fake_embedder, "c:/cap/p/d.md", ["qwen reranker hybrid search"], lane="capture", source_type="decision"),
+        _rows(fake_embedder, "c:/cap/p/n.md", ["qwen reranker hybrid search"], lane="capture", source_type="note"),
+        _rows(fake_embedder, "c:/cap/p/x.md", ["qwen reranker hybrid search"], lane="capture", source_type="unheard-of"),
+    ])
+    store.optimize()
+    q = fake_embedder.embed_query("qwen reranker")
+    res = store.search(q, top_k=10, query_text="qwen reranker")
+    assert sorted(r["doc_path"] for r in res) == ["c:/cap/p/d.md", "c:/cap/p/n.md"]
+
+
 def test_optimize_still_ensures_indexes_when_compaction_fails(store, fake_embedder, monkeypatch):
     store.upsert_batch([_rows(fake_embedder, "c:/r/p/docs/a.md", ["alpha"])])
 
@@ -158,7 +171,7 @@ class _Branch:
     def limit(self, n):
         return _Branch(self.df.head(n))
 
-    def where(self, _w):
+    def where(self, _w, prefilter=None):
         return self
 
     def to_pandas(self):

@@ -11,7 +11,10 @@ requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [{name = "sushiHex"}]
 dependencies = [
-    "lancedb>=0.15",
+    # 0.30 is the oldest release tested: store.search relies on its FTS query
+    # honouring `where(..., prefilter=True)` before the limit (#76); older
+    # Tantivy-backed FTS applied the filter after taking top_k.
+    "lancedb>=0.30",
     "sentence-transformers>=5.4.1",
     "transformers>=5.7.0",
     "packaging>=23",

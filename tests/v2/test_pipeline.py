@@ -502,3 +502,197 @@ def test_vanished_prepare_does_not_prune_when_root_disappears_after_enumeration(
 
     assert report.prune_skipped is True and report.deleted_docs == 0
     assert store.count_rows() == 1
+
+
+# ---- a rescan heals capture rows that predate their published kind ----
+
+_DECISION = "---\ntype: decision\nproject: p\n---\n# T\n\n## Summary\n{body}\n"
+
+
+def _kinds(store) -> dict:
+    df = store._scan(["doc_path", "source_type"])
+    return {p: set(df[df["doc_path"] == p]["source_type"]) for p in set(df["doc_path"])}
+
+
+def _session_era_capture(cfg, store, tmp_path, monkeypatch, body="healme body text here."):
+    """Index a `type: decision` capture while nothing is published, so its rows say `session`."""
+    cap = write_md(Lanes(cfg).capture_dir("p") / "2026-01-01-000000-ab12cd34-ef56ab78.md",
+                   _DECISION.format(body=body))
+    with monkeypatch.context() as m:
+        m.setattr("mainframe.core.classify.PUBLISHED_KINDS", frozenset())
+        assert _pipe(cfg, store, tmp_path).index([str(cap)]).upserted_rows > 0
+    assert _kinds(store) == {canonical(cap): {"session"}}
+    return cap
+
+
+def test_a_rescan_reindexes_a_capture_whose_rows_predate_its_kind(cfg, store, tmp_path, monkeypatch):
+    cap = _session_era_capture(cfg, store, tmp_path, monkeypatch)
+    calls = []
+    real = FakeEmbedder.embed
+
+    def counting(self, texts, *a, **kw):
+        calls.append(list(texts))
+        return real(self, texts, *a, **kw)
+    monkeypatch.setattr(FakeEmbedder, "embed", counting)
+    pipe = _pipe(cfg, store, tmp_path)
+    rep = pipe.rescan()
+    assert rep.unchanged == 0 and rep.upserted_rows > 0 and not rep.failed
+    assert _kinds(store) == {canonical(cap): {"decision"}}
+    assert len(calls) == 1
+    keys = list(store._scan(["chunk_key"])["chunk_key"])
+    assert len(keys) == len(set(keys)) == store.count_rows()
+    assert pipe.rescan().unchanged == 1 and len(calls) == 1          # healed: nothing embeds again
+
+
+def test_session_capture_paths_lists_only_session_capture_rows(cfg, store, tmp_path, monkeypatch):
+    """Pin: no table and an emptied table answer [], a populated one only its session captures."""
+    assert store.session_capture_paths() == []
+    r = Path(cfg["paths"]["repos_dir"]) / "p"
+    doc = write_md(r / "docs" / "k.md", "# k\n\nknowledge text.\n")
+    pipe = _pipe(cfg, store, tmp_path)
+    pipe.index([str(doc)])
+    doc.write_text("   \n", encoding="utf-8")                  # rows go, the table stays
+    pipe.index([str(doc)])
+    assert store.count_rows() == 0 and store.session_capture_paths() == []
+    legacy = _session_era_capture(cfg, store, tmp_path, monkeypatch)
+    published = write_md(Lanes(cfg).capture_dir("p") / "2026-01-02-000000-ab12cd34-ef56ab79.md",
+                         _DECISION.format(body="already published body."))
+    doc.write_text("# k\n\nknowledge text again.\n", encoding="utf-8")
+    pipe.index([str(published), str(doc)])
+    assert _kinds(store)[canonical(published)] == {"decision"}
+    assert store.session_capture_paths() == [canonical(legacy)]
+
+
+def test_a_watcher_run_does_not_heal(cfg, store, tmp_path, monkeypatch):
+    """Pin: only the periodic rescan reclassifies; index() trusts the ledger."""
+    cap = _session_era_capture(cfg, store, tmp_path, monkeypatch)
+    other = write_md(Path(cfg["paths"]["repos_dir"]) / "p" / "docs" / "o.md", "# o\n\nunrelated text.\n")
+    pipe = _pipe(cfg, store, tmp_path)
+    assert pipe.index([str(other)]).upserted_rows == 1
+    assert pipe.index([str(cap)]).unchanged == 1
+    assert _kinds(store)[canonical(cap)] == {"session"} and canonical(cap) in store.ledger()
+
+
+def test_a_failed_reclassification_scan_forces_nothing_and_prunes_on(cfg, store, tmp_path, monkeypatch):
+    cap = _session_era_capture(cfg, store, tmp_path, monkeypatch)       # a legacy `session` row set
+    r = Path(cfg["paths"]["repos_dir"]) / "p"
+    gone = write_md(r / "docs" / "gone.md", "# gone\n\nvanishing text.\n")
+    write_md(r / "docs" / "kept.md", "# kept\n\nstays put.\n")
+    pipe = _pipe(cfg, store, tmp_path)
+    with monkeypatch.context() as m:
+        m.setattr(store, "session_capture_paths", _raises_scan)
+        assert pipe.rescan().upserted_rows == 2                          # the docs; the capture is not forced
+        gone.unlink()
+        calls = []
+        real = FakeEmbedder.embed
+
+        def counting(self, texts, *a, **kw):
+            calls.append(list(texts))
+            return real(self, texts, *a, **kw)
+        m.setattr(FakeEmbedder, "embed", counting)
+        rep = pipe.rescan()
+        assert rep.prune_skipped is False and rep.deleted_docs == 1 and not rep.failed
+        assert calls == [] and _kinds(store)[canonical(cap)] == {"session"}       # forced nothing
+        assert pipe.ledger_degraded is False
+        assert set(store.ledger()) == {canonical(r / "docs" / "kept.md"), canonical(cap)}
+    rep = pipe.rescan()                                                  # scan restored: the next rescan heals
+    assert not rep.failed and _kinds(store)[canonical(cap)] == {"decision"}
+
+
+def test_a_forced_doc_that_fails_keeps_its_rows_and_heals_next_rescan(cfg, store, tmp_path, monkeypatch):
+    cap = _session_era_capture(cfg, store, tmp_path, monkeypatch, body="flaky body text here.")
+    real = FakeEmbedder.embed
+    armed = [True]
+
+    def flaky(self, texts, *a, **kw):
+        if armed and any("flaky body" in t for t in texts):
+            armed.clear()                                          # raise once, scoped to this doc's text
+            raise RuntimeError("synthetic embed failure")
+        return real(self, texts, *a, **kw)
+    monkeypatch.setattr(FakeEmbedder, "embed", flaky)
+    pipe = _pipe(cfg, store, tmp_path)
+    rep = pipe.rescan()
+    assert [f["file"] for f in rep.failed] == [canonical(cap)] and "synthetic embed failure" in rep.failed[0]["error"]
+    assert _kinds(store) == {canonical(cap): {"session"}} and canonical(cap) in store.ledger()
+    rep = pipe.rescan()
+    assert not rep.failed and _kinds(store) == {canonical(cap): {"decision"}}
+
+
+# ---- retraction: a capture moved into quarantine/ leaves the index ----
+
+def _retractable(cfg, store, tmp_path, project="p"):
+    """A published capture plus a knowledge doc, indexed; returns (pipe, capture, doc)."""
+    cap = write_md(Lanes(cfg).capture_dir(project) / "2026-01-01-000000-ab12cd34-ef56ab78.md",
+                   _DECISION.format(body="retract body text here."))
+    doc = write_md(Path(cfg["paths"]["repos_dir"]) / project / "docs" / "k.md", "# k\n\nknowledge text.\n")
+    pipe = _pipe(cfg, store, tmp_path)
+    assert pipe.rescan().failed == []
+    assert canonical(cap) in pipe._ledger_view() and canonical(doc) in pipe._ledger_view()
+    return pipe, cap, doc
+
+
+def _retract(lanes, cap, project="p"):
+    q = lanes.quarantine_dir(project)
+    q.mkdir(parents=True, exist_ok=True)
+    return Path(shutil.move(str(cap), str(q / cap.name)))
+
+
+def _search_paths(store, fake_embedder, include_captures):
+    store.optimize()
+    res = store.search(fake_embedder.embed_query("retract body text"), top_k=10, include_captures=include_captures,
+                       query_text="retract body text")
+    return {r["doc_path"] for r in res}
+
+
+def test_a_project_rescan_prunes_the_projects_retracted_capture(cfg, store, fake_embedder, tmp_path):
+    pipe, cap, doc = _retractable(cfg, store, tmp_path)
+    assert canonical(cap) in _search_paths(store, fake_embedder, False)         # published: a default search finds it
+    _retract(pipe.lanes, cap)
+    rep = pipe.rescan("p")
+    assert rep.deleted_docs == 1
+    assert set(store.ledger()) == {canonical(doc)}
+    for include in (False, True):
+        assert canonical(cap) not in _search_paths(store, fake_embedder, include)
+
+
+def test_a_rescan_of_another_project_leaves_a_retracted_capture_alone(cfg, store, tmp_path):
+    """Pin: isolation holds before and after the prune covers captures."""
+    pipe, cap, doc = _retractable(cfg, store, tmp_path)
+    _retract(pipe.lanes, cap)
+    assert pipe.rescan("q").deleted_docs == 0
+    assert {canonical(cap), canonical(doc)} <= set(store.ledger())
+
+
+def test_indexing_the_old_path_of_a_moved_capture_deletes_its_rows(cfg, store, tmp_path):
+    """Pin: the watcher delivers a move's old path; index() sees it gone and deletes."""
+    pipe, cap, doc = _retractable(cfg, store, tmp_path)
+    _retract(pipe.lanes, cap)
+    assert pipe.index([str(cap)]).deleted_docs == 1
+    assert set(store.ledger()) == {canonical(doc)}
+
+
+def test_a_missing_repos_dir_leaves_a_retracted_capture_until_it_returns(cfg, store, tmp_path):
+    """Pin, documents a limit: rescan prunes nothing without repos_dir, though capture
+    pruning does not depend on it (public #79)."""
+    pipe, cap, doc = _retractable(cfg, store, tmp_path)
+    _retract(pipe.lanes, cap)
+    shutil.rmtree(cfg["paths"]["repos_dir"])
+    rep = pipe.rescan("p")
+    assert rep.prune_skipped is True and canonical(cap) in store.ledger()
+
+
+def test_a_rescan_of_another_project_does_not_heal_this_projects_capture(cfg, store, tmp_path, monkeypatch):
+    """Pin: _reclassify's project prefix keeps rescan("q") from re-embedding p's capture."""
+    cap = _session_era_capture(cfg, store, tmp_path, monkeypatch)
+    calls = []
+    real = FakeEmbedder.embed
+
+    def counting(self, texts, *a, **kw):
+        calls.append(list(texts))
+        return real(self, texts, *a, **kw)
+    monkeypatch.setattr(FakeEmbedder, "embed", counting)
+    pipe = _pipe(cfg, store, tmp_path)
+    pipe.rescan("q")
+    assert calls == [] and _kinds(store) == {canonical(cap): {"session"}}
+    pipe.rescan("p")
+    assert len(calls) == 1 and _kinds(store) == {canonical(cap): {"decision"}}
